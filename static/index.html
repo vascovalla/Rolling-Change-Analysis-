@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JCAP · Rolling Change Analysis</title>
+  <link rel="stylesheet" href="rolling-change.css">
+  <script defer src="chart.min.js"></script>
+  <script defer src="rolling-change.js"></script>
+</head>
+<body>
+  <header class="rc-header"><span class="rc-brand">JCAP</span><div><h1>Rolling Change Analysis</h1><p>Calendar rolling changes and historical percentiles</p></div></header>
+  <!-- Rolling change analysis -->
+  <main id="pane-rollingchange" aria-label="Rolling change analysis">
+    <div class="rc-toolbar">
+      <label class="rc-search">TICKER
+        <input id="rc-search" type="text" role="combobox" aria-autocomplete="list" aria-controls="rc-suggestions" aria-expanded="false" autocomplete="off" placeholder="Search ticker or name…">
+        <div id="rc-suggestions" role="listbox" aria-label="Ticker suggestions" hidden></div>
+      </label>
+      <span class="rc-divider" aria-hidden="true"></span>
+      <label>FROM<input id="rc-from" type="date"></label>
+      <label>TO<input id="rc-to" type="date"></label>
+      <div class="rc-ranges" aria-label="Date range">
+        <button type="button" class="rc-button" data-rc-range="ytd">YTD</button>
+        <button type="button" class="rc-button" data-rc-range="1m">1M</button>
+        <button type="button" class="rc-button" data-rc-range="3m">3M</button>
+        <button type="button" class="rc-button" data-rc-range="6m">6M</button>
+        <button type="button" class="rc-button active" data-rc-range="all" title="All available history within the data service limit">All</button>
+      </div>
+    </div>
+    <div id="rc-tickers" aria-label="Selected tickers"></div>
+    <div id="rc-settings" class="rc-toolbar rc-settings">
+      <label>ROLLING PERIOD 1<select id="rc-first"><option value="1w">1 week</option><option value="1m" selected>1 month</option><option value="2m">2 months</option><option value="3m">3 months</option><option value="6m">6 months</option><option value="1y">1 year</option><option value="2y">2 years</option></select></label>
+      <label>ROLLING PERIOD 2<select id="rc-second"><option value="1w">1 week</option><option value="1m">1 month</option><option value="2m">2 months</option><option value="3m" selected>3 months</option><option value="6m">6 months</option><option value="1y">1 year</option><option value="2y">2 years</option></select></label>
+      <label>CHANGE TYPE<select id="rc-mode"><option value="pct">% change</option><option value="abs">Absolute change</option></select></label>
+      <div class="rc-actions"><button id="rc-run" type="button" class="rc-button active">Analyze</button><button id="rc-cancel" type="button" class="rc-button" hidden>Cancel update</button><button id="rc-clear" type="button" class="rc-button">Clear tickers</button></div>
+    </div>
+    <details id="rc-help" class="rc-hint" hidden><summary>How to use rolling change analysis</summary><p>Add any number of tickers. Search known company names or enter a Bloomberg ticker such as AAPL US Equity, 700 HK Equity or SPX Index. Prices and absolute changes are in each instrument’s native units.</p></details>
+    <div id="rc-status" role="status" aria-live="polite">Add tickers to begin.</div>
+    <div id="rc-results" class="rc-results-empty">
+    <div class="rc-chart-card"><h3>Price</h3><p class="rc-chart-placeholder">Add tickers and select Analyze to view closing prices.</p><div class="rc-chart-body"><canvas id="rc-chart-price" role="img" aria-label="Closing prices for selected tickers"></canvas></div></div>
+    <div class="rc-chart-card"><h3 id="rc-title-first">Rolling 1 month change</h3><p class="rc-chart-placeholder">Rolling changes will appear here.</p><div class="rc-chart-body"><canvas id="rc-chart-first" role="img" aria-label="First rolling change chart"></canvas></div></div>
+    <div class="rc-chart-card"><h3 id="rc-title-second">Rolling 3 months change</h3><p class="rc-chart-placeholder">Rolling changes will appear here.</p><div class="rc-chart-body"><canvas id="rc-chart-second" role="img" aria-label="Second rolling change chart"></canvas></div></div>
+    <section class="rc-chart-card" aria-labelledby="rc-summary-title">
+      <h3 id="rc-summary-title">Rolling change summary</h3>
+      <div id="rc-summary-tables"></div>
+      <p id="rc-summary-note" class="rc-hint">Analyze tickers to see their latest rolling changes and historical percentiles.</p>
+    </section>
+    <p class="rc-hint">Rolling change compares each close with the last available close on or before the calendar lookback date. Percentage = (price / prior price − 1) × 100; absolute = price − prior price. Insufficient history, unavailable closes and zero percentage bases appear as gaps. All displays the history available within the data service request limit.</p>
+    </div>
+  </main>
+
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Standalone Rolling Change Analysis
+Status: ready-for-agent
+
+Approved by user 28 October 2026: extract relevant code, remove Rolling Analysis from Risk, consume central data agent directly, persist historical data in a database such as PostgreSQL, push to https://github.com/vascovalla/Rolling-Change-Analysis-.git.
+
+Preserve v1168 calendar rolling math, prior-close lookbacks, price/rolling charts, percentage/absolute modes, date presets/custom ranges, multiple ticker input, percentile summary. Remove Risk globals and routes from standalone. PostgreSQL is required in production, persistent volume in Compose. Cache-first asynchronous jobs, gap-only provider batches at most 12, 100 tickers/request, coalesced concurrent requests, provisional/partial coverage retries, retain saved history on provider failure. Agent credentials server-side environment only. No .env, live financial data, database dumps or login secrets in GitHub. Local dev binds loopback; future site connects through reverse proxy and configured Basic auth; never host an unauthenticated public provider proxy. Standalone has local settings and searchable saved instrument catalog; full Bloomberg ticker entry always supported. Tests use isolated PostgreSQL and fake HTTP agent plus browser checks, no production calls.
+
+Risk removal targets latest approved personal main v1168: remove only Rolling tab, assets, setting key, dedicated price service/routes/module/tests/docs; preserve other rolling charts, existing price caches and DB data. Produce a reviewable source commit/patch; the explicit GitHub destination is the new standalone repository, so do not push removal to the shared Risk repository without separate approval. No live deployment.

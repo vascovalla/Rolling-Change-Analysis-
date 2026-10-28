@@ -1,0 +1,11 @@
+{
+  "name": "rolling-change-analysis",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node tests/test_frontend.js"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

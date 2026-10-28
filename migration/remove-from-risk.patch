@@ -1,0 +1,1562 @@
+From f242d1b122647306773b8a148631e77d8b5149ee Mon Sep 17 00:00:00 2001
+From: "Matthew CH So (JCAP)" <MCHSo@jebsen.global>
+Date: Wed, 28 Oct 2026 11:11:44 +0800
+Subject: [PATCH] Extract Rolling Analysis into standalone application (v1169)
+
+---
+ CHANGELOG.md                 |   5 +
+ README.md                    |  47 +----
+ index.html                   |  45 +----
+ price_history.py             | 275 ---------------------------
+ rolling-change.css           |  42 -----
+ rolling-change.js            | 357 -----------------------------------
+ serve.py                     |  58 ------
+ shared-constants.js          |   2 +-
+ sw.js                        |   4 +-
+ tests/test_rolling_cache.py  | 351 ----------------------------------
+ tests/test_rolling_change.js | 215 ---------------------
+ 11 files changed, 12 insertions(+), 1389 deletions(-)
+ delete mode 100644 price_history.py
+ delete mode 100644 rolling-change.css
+ delete mode 100644 rolling-change.js
+ delete mode 100644 tests/test_rolling_cache.py
+ delete mode 100644 tests/test_rolling_change.js
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1b1b3e9..b109beb 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,8 @@
++## 2026-10-28 - Extract Rolling Analysis (v1169)
++
++- Move Rolling Analysis to its own application with PostgreSQL history and direct central data-agent access.
++- Remove its tab, assets and dedicated history endpoints from Risk; preserve other rolling charts, shared history routes and saved data.
++
+ ## 2026-10-26 - Rolling lookback boundary (v1168)
+ 
+ - Include the previous available close when a lookback begins on a weekend or holiday, correcting missing rolling values and percentile samples.
+diff --git a/README.md b/README.md
+index a0ab822..e97ea6b 100644
+--- a/README.md
++++ b/README.md
+@@ -56,47 +56,8 @@ integration. Browser app + PWA-installable on iOS/Android.
+ 
+ Detailed steps in `DEPLOYMENT.md`.
+ 
+-## Rolling change analysis
++## Rolling Change Analysis
+ 
+-Uses the Positions ticker catalogue/search and accepts full Bloomberg tickers.
+-Paste comma/newline-separated full tickers to add a list, then Analyze once.
+-Prices already loaded into the shared HISTORY dataset are shown immediately; new
+-observations are merged back without replacing other tickers or older dates.
+-Other tabs retain their current request/refresh behavior.
+-Settings use the existing shared desk store; localStorage is only its mirror.
+-
+-Daily PX_LAST observations are saved in `daily_prices` and coverage metadata in
+-`daily_price_coverage`, inside the existing `risk_system.db` and its backup flow.
+-Existing `bbg_history_cache.json` and `bbg_field_history__PX_LAST.json` seed missing
+-history; newer snapshot revisions can correct older observations. New prices merge into the shared
+-history cache for other tabs. Live quote snapshots are not historical series.
+-
+-`GET /api/bbg-history?range=1&tickers=...&from=YYYY-MM-DD&to=YYYY-MM-DD`
+-uses the existing shared history route and returns saved prices immediately and a job identifier when gaps need filling.
+-Poll with the same query plus `job`. Failed/partial fetches retain saved values
+-and return warnings. Gap fetches use the configured Bloomberg data-agent BDH
+-client, explicit dates and batches of12, with duplicate work suppressed. Empty
+-or partial historical responses retry after six hours; current-day coverage
+-retries after five minutes. Provisional prices are finalized after the session.
+-Fully observed historical intervals persist. Provider availability is not required for cached
+-coverage. A whole-series refresh is not forced by Analyze.
+-
+-One browser request accepts100 tickers; larger selections are split automatically.
+-All covers2600 calendar days. Custom ranges plus lookback may span up to4000
+-calendar days. Rolling calculations use calendar periods, month-end clamping and
+-the previous available observation. Null prices remain gaps; explicit zero prices
+-are retained, but cannot serve as percentage-return denominators.
+-
+-Validation (isolated, no live Bloomberg):
+-- `python -m pytest tests/test_rolling_cache.py -q`
+-- `node tests/test_rolling_change.js` with Playwright and Edge available.
+-
+-The Rolling change summary shows 1M, 3M, 6M and 12M price changes for each ticker.
+-Percentiles use valid daily rolling changes within the selected date range, with
+-average ranks for ties (0-100); fewer than two observations show a dash. Red marks
+-the bottom decile, green the top decile. The table follows the %/absolute mode
+-and end date. Shared history requests include a one-year lookback for the table.
+-
+-Rolling requests also include the preceding available close at the earliest
+-lookback boundary. Missing predecessor coverage uses the same database gap
+-planner, expanding up to 4,000 days; missing prices remain unavailable.
++Rolling Analysis has moved to its standalone repository:
++https://github.com/vascovalla/Rolling-Change-Analysis-
++Existing saved Risk prices and database history are preserved.
+diff --git a/index.html b/index.html
+index 6f3c225..7811757 100644
+--- a/index.html
++++ b/index.html
+@@ -190,8 +190,6 @@
+ <meta name="mobile-web-app-capable" content="yes">
+ 
+ <script src="chart.min.js"></script>
+-<link rel="stylesheet" href="rolling-change.css?v=1168">
+-<script src="rolling-change.js?v=1168"></script>
+ <!-- Zoom/pan for the Chart Builder (trader 2026-09-14). Same vendored plugin
+      the Options pane uses; inert on every other chart until a chart declares
+      options.plugins.zoom. hammer.js gives it touch/drag gestures. -->
+@@ -2719,7 +2717,6 @@ body.dark .cbx-correlation .cbx-corrb button.on{background:var(--jc-orange)}
+   <div class="tab" data-tab="analytics" onclick="switchTab('analytics')">Analytics</div>
+   <div class="tab" data-tab="earnings" onclick="switchTab('earnings')">Calendar</div>
+   <div class="tab" data-tab="chartbuilder" onclick="switchTab('chartbuilder')">Chart Builder</div>
+-  <div class="tab" data-tab="rollingchange" onclick="switchTab('rollingchange')">Rolling change analysis</div>
+   <div class="tab" data-tab="database" onclick="switchTab('database')">Database</div>
+   <div class="tab" data-tab="hyperlinks" onclick="switchTab('hyperlinks')">Hyperlinks</div>
+ </div>
+@@ -4782,45 +4779,6 @@ body.dark .cbx-correlation .cbx-corrb button.on{background:var(--jc-orange)}
+   </div>
+ 
+   <!-- Rolling change analysis -->
+-  <div class="tab-pane" id="pane-rollingchange">
+-    <div class="rc-toolbar">
+-      <label class="rc-search">TICKER
+-        <input id="rc-search" type="text" role="combobox" aria-autocomplete="list" aria-controls="rc-suggestions" aria-expanded="false" autocomplete="off" placeholder="Search ticker or name…">
+-        <div id="rc-suggestions" role="listbox" aria-label="Ticker suggestions" hidden></div>
+-      </label>
+-      <span class="rc-divider" aria-hidden="true"></span>
+-      <label>FROM<input id="rc-from" type="date"></label>
+-      <label>TO<input id="rc-to" type="date"></label>
+-      <div class="rc-ranges" aria-label="Date range">
+-        <button type="button" class="strat-btn" data-rc-range="ytd">YTD</button>
+-        <button type="button" class="strat-btn" data-rc-range="1m">1M</button>
+-        <button type="button" class="strat-btn" data-rc-range="3m">3M</button>
+-        <button type="button" class="strat-btn" data-rc-range="6m">6M</button>
+-        <button type="button" class="strat-btn active" data-rc-range="all" title="All available history within the data service limit">All</button>
+-      </div>
+-    </div>
+-    <div id="rc-tickers" aria-label="Selected tickers"></div>
+-    <div id="rc-settings" class="rc-toolbar rc-settings">
+-      <label>ROLLING PERIOD 1<select id="rc-first"><option value="1w">1 week</option><option value="1m" selected>1 month</option><option value="2m">2 months</option><option value="3m">3 months</option><option value="6m">6 months</option><option value="1y">1 year</option><option value="2y">2 years</option></select></label>
+-      <label>ROLLING PERIOD 2<select id="rc-second"><option value="1w">1 week</option><option value="1m">1 month</option><option value="2m">2 months</option><option value="3m" selected>3 months</option><option value="6m">6 months</option><option value="1y">1 year</option><option value="2y">2 years</option></select></label>
+-      <label>CHANGE TYPE<select id="rc-mode"><option value="pct">% change</option><option value="abs">Absolute change</option></select></label>
+-      <div class="rc-actions"><button id="rc-run" type="button" class="strat-btn active">Analyze</button><button id="rc-clear" type="button" class="strat-btn">Clear tickers</button></div>
+-    </div>
+-    <details id="rc-help" class="rc-hint" hidden><summary>How to use rolling change analysis</summary><p>Add any number of tickers. Search known company names or enter a Bloomberg ticker such as AAPL US Equity, 700 HK Equity or SPX Index. Prices and absolute changes are in each instrument’s native units.</p></details>
+-    <div id="rc-status" role="status" aria-live="polite">Add tickers to begin.</div>
+-    <div id="rc-results" class="rc-results-empty">
+-    <div class="rc-chart-card"><h3>Price</h3><p class="rc-chart-placeholder">Add tickers and select Analyze to view closing prices.</p><div class="rc-chart-body"><canvas id="rc-chart-price" role="img" aria-label="Closing prices for selected tickers"></canvas></div></div>
+-    <div class="rc-chart-card"><h3 id="rc-title-first">Rolling 1 month change</h3><p class="rc-chart-placeholder">Rolling changes will appear here.</p><div class="rc-chart-body"><canvas id="rc-chart-first" role="img" aria-label="First rolling change chart"></canvas></div></div>
+-    <div class="rc-chart-card"><h3 id="rc-title-second">Rolling 3 months change</h3><p class="rc-chart-placeholder">Rolling changes will appear here.</p><div class="rc-chart-body"><canvas id="rc-chart-second" role="img" aria-label="Second rolling change chart"></canvas></div></div>
+-    <section class="rc-chart-card" aria-labelledby="rc-summary-title">
+-      <h3 id="rc-summary-title">Rolling change summary</h3>
+-      <div id="rc-summary-tables"></div>
+-      <p id="rc-summary-note" class="rc-hint">Analyze tickers to see their latest rolling changes and historical percentiles.</p>
+-    </section>
+-    <p class="rc-hint">Rolling change compares each close with the last available close on or before the calendar lookback date. Percentage = (price / prior price − 1) × 100; absolute = price − prior price. Insufficient history, unavailable closes and zero percentage bases appear as gaps. All displays the history available within the data service request limit.</p>
+-    </div>
+-  </div>
+-
+   <!-- Database Tab -->
+   <div class="tab-pane" id="pane-database">
+     <!-- Sub-tabs -->
+@@ -37236,7 +37194,6 @@ function switchTab(t) {
+     if (active && active.dataset.cbnav === 'custom') cbInit(); else cbPivotInit();
+   } catch (e) { console.error('[cb]', e); } }
+   if (t === 'database') loadFullData();
+-  if (t === 'rollingchange') rcInit();
+   // Options tab: explicitly trigger the iframe load. Previously this relied
+   // on a separate `document.click` listener that walked `ev.target.classList`
+   // — which is `undefined` when the click lands on the text node inside the
+@@ -38793,7 +38750,7 @@ function _ptRenderBasket() {
+   let saved;
+   try { saved = localStorage.getItem('activeTab'); } catch (e) {}
+   if (!saved || saved === 'overview') return;  // overview is the default
+-  const validTabs = new Set(['overview','pnl','snapshot','risk','options','portfolio','position','trades','scenario','analytics','earnings','rollingchange','database','hyperlinks']);
++  const validTabs = new Set(['overview','pnl','snapshot','risk','options','portfolio','position','trades','scenario','analytics','earnings','database','hyperlinks']);
+   if (!validTabs.has(saved)) return;
+   // Defer to next tick so any remaining init / data loaders finish first.
+   // Skip HIDDEN tab buttons too (2026-07-29: Analytics is display:none) —
+diff --git a/price_history.py b/price_history.py
+deleted file mode 100644
+index 4b9ef46..0000000
+--- a/price_history.py
++++ /dev/null
+@@ -1,275 +0,0 @@
+-"""Cache-first daily prices in the application's existing SQLite database.
+-
+-No imports of the server, credentials, startup work or live calls. Dependencies
+-are supplied by the host; tests use a temporary database and a fake provider.
+-"""
+-import datetime as dt
+-import hashlib
+-import json
+-import math
+-import os
+-import re
+-import threading
+-import time
+-from collections import defaultdict
+-from contextlib import closing
+-
+-
+-def date(value):
+-    parsed = dt.date.fromisoformat(value)
+-    if parsed.isoformat() != value:
+-        raise ValueError('Dates must be YYYY-MM-DD')
+-    return parsed
+-
+-
+-def valid_price(value):
+-    return isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
+-
+-
+-class PriceHistory:
+-    def __init__(self, connect, fetch, seed_paths=(), mirror=None, clock=time.time):
+-        self.connect, self.fetch = connect, fetch
+-        self.seed_paths, self.mirror, self.clock = seed_paths, mirror, clock
+-        self.lock = threading.RLock()
+-        self.worker_lock = threading.Lock()
+-        self.jobs, self.seeds = {}, {}
+-        with closing(connect()) as c:
+-            c.executescript('''
+-                CREATE TABLE IF NOT EXISTS daily_prices (
+-                    ticker TEXT NOT NULL, field TEXT NOT NULL, date TEXT NOT NULL,
+-                    value REAL NOT NULL, updated REAL NOT NULL, provisional INTEGER NOT NULL, PRIMARY KEY(ticker,field,date));
+-                CREATE TABLE IF NOT EXISTS daily_price_coverage (
+-                    ticker TEXT NOT NULL, field TEXT NOT NULL, start TEXT NOT NULL,
+-                    end TEXT NOT NULL, expires REAL NOT NULL, partial INTEGER NOT NULL DEFAULT 0,
+-                    PRIMARY KEY(ticker,field,start,end));
+-            ''')
+-
+-    def seed(self):
+-        """Import existing saved history without replacing newer database bars (snapshot revision timestamps)."""
+-        with self.lock:
+-            for path in self.seed_paths:
+-                try:
+-                    stat = os.stat(path)
+-                    stamp = (stat.st_mtime_ns, stat.st_size)
+-                    if self.seeds.get(path) == stamp:
+-                        continue
+-                    with open(path, encoding='utf-8') as f:
+-                        data = json.load(f)
+-                    revised = stat.st_mtime
+-                    timestamp = data.get('timestamp')
+-                    if isinstance(timestamp, str):
+-                        try:
+-                            revised = dt.datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp()
+-                        except ValueError:
+-                            pass
+-                    data = data.get('data', data)
+-                    rows = []
+-                    for ticker, payload in data.items():
+-                        if not isinstance(payload, dict):
+-                            continue
+-                        values = payload.get('last', payload.get('values', []))
+-                        for day, value in zip(payload.get('dates', []), values):
+-                            try:
+-                                date(day)
+-                            except (ValueError, TypeError):
+-                                continue
+-                            if valid_price(value):
+-                                rows.append((ticker, 'PX_LAST', day, value, revised, self.provisional(day, revised)))
+-                    with closing(self.connect()) as c, c:
+-                        c.execute('BEGIN IMMEDIATE')
+-                        c.executemany("INSERT INTO daily_prices VALUES (?,?,?,?,?,?) ON CONFLICT(ticker,field,date) DO UPDATE SET value=excluded.value,updated=excluded.updated,provisional=CASE WHEN excluded.value=daily_prices.value THEN daily_prices.provisional ELSE excluded.provisional END WHERE excluded.updated > daily_prices.updated", rows)
+-                    self.seeds[path] = stamp
+-                except (OSError, ValueError, TypeError, AttributeError):
+-                    # One bad legacy cache must not prevent using the database.
+-                    continue
+-
+-    def provisional(self, day, observed_at=None):
+-        # Allow overnight markets to finish; re-fetch provisional observations
+-        # after this boundary instead of silently freezing an intraday quote.
+-        ready = dt.datetime.combine(date(day) + dt.timedelta(days=1), dt.time(12), dt.timezone.utc).timestamp()
+-        return int((self.clock() if observed_at is None else observed_at) < ready)
+-
+-    def read(self, tickers, start, end, predecessor=False):
+-        out = {}
+-        with closing(self.connect()) as c:
+-            for ticker in tickers:
+-                rows = c.execute('SELECT date,value FROM daily_prices WHERE ticker=? AND field=? AND date BETWEEN ? AND ? ORDER BY date',
+-                                 (ticker, 'PX_LAST', start, end)).fetchall()
+-                if predecessor and (not rows or rows[0][0] != start):
+-                    prior = c.execute('SELECT date,value FROM daily_prices WHERE ticker=? AND field=? AND date<? ORDER BY date DESC LIMIT 1',
+-                                      (ticker, 'PX_LAST', start)).fetchone()
+-                    if prior:
+-                        rows.insert(0, prior)
+-                out[ticker] = {'dates': [r[0] for r in rows], 'values': [r[1] for r in rows]}
+-        return out
+-
+-    def predecessor_start(self, ticker, start):
+-        """Search through the boundary, not just a hardcoded weekend buffer."""
+-        entry = self.read([ticker], start, start, predecessor=True)[ticker]
+-        floor = max(dt.date.min, date(start) - dt.timedelta(days=min(4000, date(start).toordinal() - 1)))
+-        if entry['dates']:
+-            prior = entry['dates'][-1]
+-            if prior == start:
+-                return start
+-            return max(floor, date(prior)).isoformat()
+-        return floor.isoformat()
+-
+-    def needs_predecessor(self, tickers, start):
+-        return any(self.gaps([t], self.predecessor_start(t, start), start) for t in tickers)
+-
+-    def fill_predecessors(self, tickers, start):
+-        errors = []
+-        # Expanding windows handle holidays and long suspensions without fetching
+-        # years of data for the normal Friday-before-Sunday case. All passes use
+-        # the same gap planner, batch limit and persistent coverage as ordinary history.
+-        pending = list(tickers)
+-        failed = set()
+-        for width in (7, 30, 90, 365, 1460, 4000):
+-            groups = defaultdict(list)
+-            for ticker in pending:
+-                lower = self.predecessor_start(ticker, start)
+-                bound = date(start) - dt.timedelta(days=min(width, date(start).toordinal() - 1))
+-                groups[max(lower, bound.isoformat())].append(ticker)
+-            for lower, names in groups.items():
+-                result = self.fill(names, lower, start)
+-                errors.extend(result)
+-                if any('Price provider unavailable' in e for e in result):
+-                    failed.update(names)
+-                failed.update(t for t in names if 'No valid provider response for ' + t in result)
+-            pending = [t for t in pending if t not in failed and (self.needs_predecessor([t], start) or not self.read([t], start, start, predecessor=True)[t]['dates'])]
+-            if not pending:
+-                break
+-        if pending:
+-            errors.append('No previous close found within 4,000 days for ' + ', '.join(pending) + '; affected rolling values remain unavailable.')
+-        return list(dict.fromkeys(errors))
+-
+-    def gaps(self, tickers, start, end):
+-        """Weekday holes plus expired current-day coverage; weekends need no BDH."""
+-        result = defaultdict(list)
+-        with closing(self.connect()) as c:
+-            for ticker in tickers:
+-                known = {r[0] for r in c.execute('SELECT date FROM daily_prices WHERE ticker=? AND field=? AND date BETWEEN ? AND ? AND provisional=0', (ticker, 'PX_LAST', start, end))}
+-                covered = c.execute('SELECT start,end FROM daily_price_coverage WHERE ticker=? AND field=? AND end>=? AND start<=? AND expires>?',
+-                                    (ticker, 'PX_LAST', start, end, self.clock())).fetchall()
+-                missing = []
+-                day, stop = date(start), date(end)
+-                while day <= stop:
+-                    iso = day.isoformat()
+-                    if day.weekday() < 5 and iso not in known and not any(a <= iso <= b for a, b in covered):
+-                        missing.append(day)
+-                    day += dt.timedelta(days=1)
+-                # Coalesce consecutive missing sessions, including intervening weekends.
+-                for day in missing:
+-                    if result[ticker] and (day - date(result[ticker][-1][1])).days <= (3 if day.weekday() == 0 else 1):
+-                        result[ticker][-1][1] = day.isoformat()
+-                    else:
+-                        result[ticker].append([day.isoformat(), day.isoformat()])
+-        return dict(result)
+-
+-    def fill(self, tickers, start, end):
+-        """Serialized read/plan/fetch prevents overlapping jobs fetching twice."""
+-        errors = []
+-        with self.worker_lock:
+-            groups = defaultdict(list)
+-            for ticker, ranges in self.gaps(tickers, start, end).items():
+-                for a, b in ranges:
+-                    groups[a, b].append(ticker)
+-            for (a, b), names in groups.items():
+-                for offset in range(0, len(names), 12):
+-                    batch = names[offset:offset + 12]
+-                    try:
+-                        data = self.fetch(batch, a, b)
+-                    except Exception:
+-                        errors.append('Price provider unavailable; saved prices retained.')
+-                        continue
+-                    now = self.clock()
+-                    mirror = {}
+-                    with closing(self.connect()) as c, c:
+-                        c.execute('BEGIN IMMEDIATE')
+-                        for ticker in batch:
+-                            payload = data.get(ticker) if isinstance(data, dict) else None
+-                            if not isinstance(payload, list):
+-                                errors.append('No valid provider response for ' + ticker)
+-                                continue
+-                            rows = []
+-                            invalid = False
+-                            for row in payload:
+-                                if not isinstance(row, dict):
+-                                    invalid = True
+-                                    continue
+-                                day, value = row.get('date'), row.get('PX_LAST')
+-                                try:
+-                                    date(day)
+-                                except (ValueError, TypeError):
+-                                    invalid = True
+-                                    continue
+-                                if a <= day <= b and valid_price(value):
+-                                    rows.append((ticker, 'PX_LAST', day, value, now, self.provisional(day)))
+-                                elif a <= day <= b:
+-                                    invalid = True
+-                            c.executemany("INSERT INTO daily_prices VALUES (?,?,?,?,?,?) ON CONFLICT(ticker,field,date) DO UPDATE SET value=excluded.value,updated=excluded.updated,provisional=excluded.provisional", rows)
+-                            # BDH responses do not attest completeness. Never certify
+-                            # omitted weekdays permanently (holiday, suspension or truncation).
+-                            present = {r[2] for r in rows}
+-                            day, stop = date(a), date(b)
+-                            omissions = False
+-                            while day <= stop:
+-                                if day.weekday() < 5 and day.isoformat() not in present:
+-                                    omissions = True
+-                                day += dt.timedelta(days=1)
+-                            if not invalid:
+-                                provisional = self.provisional(b)
+-                                expires = now + (300 if provisional else 21600) if omissions or provisional else 253402300799
+-                                c.execute('INSERT OR REPLACE INTO daily_price_coverage VALUES (?,?,?,?,?,?)', (ticker, 'PX_LAST', a, b, expires, int(omissions)))
+-                            if omissions or invalid:
+-                                errors.append('Price gaps remain for ' + ticker + '; saved available prices. Missing dates will be checked again later.')
+-                            if rows:
+-                                mirror[ticker] = {'dates': [r[2] for r in rows], 'last': [r[3] for r in rows]}
+-                    if mirror and self.mirror:
+-                        try:
+-                            self.mirror(mirror)
+-                        except Exception:
+-                            errors.append('Prices saved in database; shared cache mirror could not be updated.')
+-        return list(dict.fromkeys(errors))
+-
+-    def request(self, tickers, start, end, job=None, predecessor=False):
+-        tickers = list(dict.fromkeys(tickers))
+-        today = dt.datetime.fromtimestamp(self.clock(), dt.timezone.utc).date()
+-        if not tickers or len(tickers) > 100 or any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 ./&-]{0,70}', t) for t in tickers):
+-            raise ValueError('Request between 1 and 100 Bloomberg tickers per batch')
+-        if date(start) > date(end) or date(end) > today or (date(end) - date(start)).days > 4000:
+-            raise ValueError('Invalid history range (maximum 4000 calendar days)')
+-        key = hashlib.sha256(json.dumps([sorted(tickers), start, end] + ([True] if predecessor else [])).encode()).hexdigest()[:24]
+-        if job and job != key:
+-            raise ValueError('History job does not match requested range')
+-        if not job:
+-            self.seed()
+-        with self.lock:
+-            data = self.read(tickers, start, end, predecessor=predecessor)
+-            self.jobs = {k: v for k, v in self.jobs.items() if v['status'] == 'refreshing' or self.clock() - v['created'] < 3600}
+-            state = self.jobs.get(key)
+-            if not job and (not state or state['status'] != 'refreshing'):
+-                if not self.gaps(tickers, start, end) and not (predecessor and self.needs_predecessor(tickers, start)):
+-                    with closing(self.connect()) as c:
+-                        partial = [t for t in tickers if c.execute(
+-                            'SELECT 1 FROM daily_price_coverage WHERE ticker=? AND field=? AND start<=? AND end>=? AND expires>? AND partial=1 LIMIT 1',
+-                            (t, 'PX_LAST', end, start, self.clock())).fetchone()]
+-                    return {'ok': True, 'status': 'partial' if partial else 'cached', 'data': data,
+-                            'errors': ['Some dates have no returned prices for ' + ', '.join(partial) + '; saved prices shown. Missing dates will be checked again later.'] if partial else []}
+-                if sum(v['status'] == 'refreshing' for v in self.jobs.values()) >= 8:
+-                    return {'ok': True, 'status': 'partial', 'data': data, 'errors': ['Price fetch queue is busy; retry shortly.']}
+-                state = {'status': 'refreshing', 'created': self.clock(), 'errors': []}
+-                self.jobs[key] = state
+-                def work():
+-                    try:
+-                        errors = self.fill(tickers, start, end)
+-                        if predecessor:
+-                            errors.extend(self.fill_predecessors(tickers, start))
+-                    except Exception:
+-                        errors = ['Price update failed; saved prices retained.']
+-                    with self.lock:
+-                        state.update(status='partial' if errors else 'complete', errors=errors)
+-                threading.Thread(target=work, daemon=True, name='daily-price-gaps').start()
+-            if state is None:
+-                return {'ok': True, 'status': 'partial', 'data': data, 'errors': ['History job expired; Analyze again.']}
+-            return {'ok': True, 'job': key, 'status': state['status'], 'data': data, 'errors': list(state['errors'])}
+diff --git a/rolling-change.css b/rolling-change.css
+deleted file mode 100644
+index b7fec5f..0000000
+--- a/rolling-change.css
++++ /dev/null
+@@ -1,42 +0,0 @@
+-#pane-rollingchange { padding: 0; }
+-.rc-toolbar { display:flex; flex-wrap:wrap; column-gap:18px; row-gap:12px; align-items:center; margin-bottom:20px; }
+-.rc-toolbar label { white-space:nowrap; display:flex; align-items:center; gap:10px; font-size:11px; font-weight:600; color:var(--muted); }
+-.rc-toolbar input, .rc-toolbar select { height:26px; border:1px solid var(--border); border-radius:4px; padding:4px 8px; background:var(--card); color:var(--text); font:inherit; font-weight:400; font-size:11px; }
+-.rc-search { position:relative; }
+-#rc-search { width:260px; padding:5px 10px; border-radius:5px; font-size:12px; }
+-.rc-divider { width:1px; height:20px; background:var(--border); }
+-.rc-ranges { display:flex; gap:10px; }
+-.rc-settings { margin-top:18px; padding-top:16px; border-top:1px solid var(--border); column-gap:24px; }
+-#pane-rollingchange [hidden] { display:none !important; }
+-#rc-tickers:empty { display:none; }
+-#rc-status.rc-empty { padding:12px 0; font-size:12px; }
+-#rc-suggestions { position:absolute; top:100%; left:49px; right:0; z-index:40; max-height:300px; overflow:auto; background:var(--card); border:1px solid var(--border); box-shadow:0 5px 16px #0002; }
+-#rc-suggestions button { display:block; width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--text); text-align:left; padding:9px; cursor:pointer; font-size:12px; }
+-#rc-suggestions button:hover, #rc-suggestions [aria-selected="true"] { background:var(--border); }
+-.rc-actions { display:flex; gap:10px; padding-left:16px; border-left:1px solid var(--border); }
+-.rc-actions button { height:26px; padding:4px 12px; }
+-#rc-tickers { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
+-.rc-chip { border:1px solid var(--border); border-radius:16px; padding:5px 10px; background:var(--bg); color:var(--text); cursor:pointer; font-size:12px; }
+-.rc-hint, #rc-status { color:var(--muted); font-size:12px; line-height:1.6; }
+-.rc-chart-card { margin-top:22px; padding:18px; border:1px solid var(--border); border-radius:6px; background:var(--card, var(--bg)); }
+-.rc-chart-card h3 { font-size:13px; font-weight:600; margin:0 0 14px; color:var(--text); }
+-.rc-chart-body { height:280px; position:relative; }
+-@media(max-width:650px) { #pane-rollingchange { padding:12px; } .rc-search { width:100%; } #rc-search { flex:1; min-width:0; } .rc-divider { display:none; } .rc-chart-body { height:240px; } }
+-
+-.rc-chart-placeholder { display:none; margin:20px 0; color:var(--muted); font-size:12px; }
+-.rc-results-empty .rc-chart-placeholder { display:block; }
+-.rc-results-empty .rc-chart-body { display:none; }
+-
+-#rc-summary-tables { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:24px; }
+-.rc-summary-card { min-width:0; }
+-.rc-summary-card h4 { margin:0 0 6px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+-.rc-summary-card p { margin:0 0 10px; }
+-#pane-rollingchange .rc-summary-table { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
+-#pane-rollingchange .rc-summary-table th, #pane-rollingchange .rc-summary-table td { padding:7px 10px; border-bottom:1px solid var(--border); text-align:right; white-space:normal; overflow-wrap:anywhere; }
+-#pane-rollingchange .rc-summary-table th:first-child { text-align:left; width:23%; }
+-#pane-rollingchange .rc-summary-table thead th { font-size:10px; font-weight:600; color:var(--muted); background:transparent; }
+-#pane-rollingchange .rc-summary-table tbody th { font-weight:400; background:transparent; color:var(--text); position:static; }
+-#pane-rollingchange .rc-summary-table tbody tr:first-child td { font-weight:700; }
+-#pane-rollingchange .rc-summary-table td.rc-percentile-low { background:rgba(220,65,65,.13); }
+-#pane-rollingchange .rc-summary-table td.rc-percentile-high { background:rgba(40,165,95,.13); }
+-#rc-summary-note { margin:16px 0 0; }
+diff --git a/rolling-change.js b/rolling-change.js
+deleted file mode 100644
+index 71bb6b8..0000000
+--- a/rolling-change.js
++++ /dev/null
+@@ -1,357 +0,0 @@
+-/* Rolling change analysis. Uses the existing Bloomberg data-agent history API. */
+-(function (root) {
+-  'use strict';
+-  const WINDOWS = { '1w': [0, 7], '1m': [1, 0], '2m': [2, 0], '3m': [3, 0], '6m': [6, 0], '1y': [12, 0], '2y': [24, 0] };
+-  function canonical(text) {
+-    const s = String(text || '').trim().replace(/\s+/g, ' ');
+-    if (!/^[a-z0-9][a-z0-9 .\/&-]{0,55} (equity|index|comdty|curncy|corp|govt)$/i.test(s)) return null;
+-    const p = s.split(' '), suffix = p.pop().toLowerCase();
+-    return p.join(' ').toUpperCase() + ' ' + suffix[0].toUpperCase() + suffix.slice(1);
+-  }
+-  function isoDate(value) {
+-    const m = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+-    if (!m) return null;
+-    const date = new Date(value + 'T00:00:00Z');
+-    return Number.isFinite(+date) && date.toISOString().slice(0, 10) === value ? date : null;
+-  }
+-  function shifted(iso, window) {
+-    const d = isoDate(iso), [months, days] = WINDOWS[window];
+-    if (months) {
+-      const day = d.getUTCDate();
+-      d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - months);
+-      const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+-      d.setUTCDate(Math.min(day, end));
+-    } else d.setUTCDate(d.getUTCDate() - days);
+-    return d.toISOString().slice(0, 10);
+-  }
+-  function normalize(payload) {
+-    const rows = new Map();
+-    (payload.dates || []).forEach((date, i) => {
+-      const value = (payload.last || payload.values || [])[i];
+-      if (isoDate(date) && typeof value === 'number' && Number.isFinite(value)) rows.set(date, value);
+-    });
+-    return [...rows].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value }));
+-  }
+-  function rolling(rows, window, mode) {
+-    // Walk actual observations, never forward-fill the current close across holidays.
+-    let previous = -1;
+-    return rows.map((row, i) => {
+-      const target = shifted(row.date, window);
+-      while (previous + 1 < i && rows[previous + 1].date <= target) previous++;
+-      if (previous < 0) return null;
+-      const base = rows[previous].value;
+-      if (mode === 'pct' && base === 0) return null;
+-      const change = mode === 'pct' ? (row.value / base - 1) * 100 : row.value - base;
+-      return Number.isFinite(change) ? change : null;
+-    });
+-  }
+-  function percentile(value, sample) {
+-    const valid = sample.filter(v => typeof v === 'number' && Number.isFinite(v));
+-    if (value == null || !Number.isFinite(value) || valid.length < 2) return null;
+-    const less = valid.filter(v => v < value).length, equal = valid.filter(v => v === value).length;
+-    // Average ranks for ties; minimum 0, maximum 100, constant samples 50.
+-    return 100 * (less + (equal - 1) / 2) / (valid.length - 1);
+-  }
+-  function summary(rows, from, to, mode) {
+-    const visible = rows.map((r, i) => ({ ...r, i })).filter(r => r.date >= from && r.date <= to);
+-    const last = visible.at(-1);
+-    return { date: last?.date || null, periods: ['1m', '3m', '6m', '1y'].map(window => {
+-      const values = rolling(rows, window, mode);
+-      const sample = visible.map(r => values[r.i]).filter(v => v !== null);
+-      const latest = last ? values[last.i] : null;
+-      return { label: window === '1y' ? '12M' : window.toUpperCase(), latest, percentile: percentile(latest, sample), count: sample.length };
+-    }) };
+-  }
+-  // Export pure calculations for deterministic tests without a browser or live feed.
+-  if (typeof module !== 'undefined' && module.exports) module.exports = { canonical, shifted, normalize, rolling, percentile, summary };
+-  if (!root.document) return;
+-  const $ = id => document.getElementById('rc-' + id);
+-  let selected = [], history = {}, charts = [], initialized = false, matches = [], active = -1, generation = 0, controller, range = 'all';
+-  const colors = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2', '#edc949', '#af7aa1'];
+-  const text = (tag, content, cls) => { const e = document.createElement(tag); e.textContent = content; if (cls) e.className = cls; return e; };
+-  function sharedHistory() {
+-    return typeof HISTORY === 'object' && HISTORY && HISTORY.data ? HISTORY.data : {};
+-  }
+-  function sharePrices(data) {
+-    const shared = sharedHistory();
+-    Object.entries(data).forEach(([ticker, payload]) => {
+-      const rows = new Map(normalize(shared[ticker] || {}).map(r => [r.date, r.value]));
+-      normalize(payload).forEach(r => rows.set(r.date, r.value));
+-      const dates = [...rows.keys()].sort();
+-      if (dates.length) shared[ticker] = Object.assign({}, shared[ticker], { dates, last: dates.map(d => rows.get(d)) });
+-    });
+-  }
+-  function save() {
+-    try { jcapStore.save('rollingChange', { selected, range, from: $('from').value, to: $('to').value, first: $('first').value, second: $('second').value, mode: $('mode').value }); } catch (_) {}
+-  }
+-  function invalidate() {
+-    generation++; if (controller) controller.abort();
+-    $('summary-tables').replaceChildren(); $('summary-note').textContent = 'Analyze tickers to see their latest rolling changes and historical percentiles.';
+-    history = {}; destroy(); $('results').classList.add('rc-results-empty'); updateTitles(); $('run').disabled = false;
+-    $('status').textContent = selected.length ? 'Ready. Select Analyze to use saved prices and fill missing dates.' : 'Select tickers to view rolling change analysis';
+-  }
+-  function catalog(query) {
+-    if (typeof _posRefreshTickerOptions === 'function') _posRefreshTickerOptions();
+-    // Same catalogue and matching function as the Positions ticker bar.
+-    return (typeof _posTickerMatches === 'function' ? _posTickerMatches(query) : [])
+-      .map(o => ({ ticker: canonical(o.value), name: o.text })).filter(o => o.ticker);
+-  }
+-  function suggest() {
+-    const q = $('search').value.trim().toLowerCase().replace(/\s+/g, ' ');
+-    matches = catalog(q).filter(o => !selected.includes(o.ticker));
+-    const full = canonical(q) || (/^[a-z0-9][a-z0-9.\/-]* [a-z]{2}$/i.test(q) ? canonical(q + ' Equity') : null);
+-    if (full && !selected.includes(full) && !matches.some(o => o.ticker === full)) matches.unshift({ ticker: full, name: 'Load Bloomberg history' });
+-    matches = matches.slice(0, 30); active = -1;
+-    const list = $('suggestions'); list.replaceChildren();
+-    matches.forEach((item, i) => {
+-      const b = text('button', item.name + ' · ' + item.ticker); b.type = 'button'; b.id = 'rc-option-' + i;
+-      b.setAttribute('role', 'option'); b.setAttribute('aria-selected', 'false');
+-      b.onmousedown = e => e.preventDefault(); b.onclick = () => add(item.ticker); list.append(b);
+-    });
+-    if (!matches.length) list.append(text('div', 'Enter a full Bloomberg ticker, e.g. 700 HK Equity or SPX Index.', 'rc-hint'));
+-    list.hidden = false; $('search').setAttribute('aria-expanded', 'true'); $('search').removeAttribute('aria-activedescendant');
+-  }
+-  function closeSuggestions() { $('suggestions').hidden = true; $('search').setAttribute('aria-expanded', 'false'); $('search').removeAttribute('aria-activedescendant'); }
+-  function add(ticker) {
+-    if (!selected.includes(ticker)) { selected.push(ticker); invalidate(); save(); paintChips(); }
+-    $('search').value = ''; closeSuggestions(); $('search').focus();
+-  }
+-  function paintChips() {
+-    $('help').hidden = !selected.length;
+-    $('status').classList.toggle('rc-empty', !selected.length);
+-    if (!selected.length) $('status').textContent = 'Select tickers to view rolling change analysis';
+-    $('tickers').replaceChildren();
+-    selected.forEach(ticker => {
+-      const b = text('button', ticker + ' ×', 'rc-chip'); b.type = 'button'; b.setAttribute('aria-label', 'Remove ' + ticker);
+-      b.onclick = () => { selected = selected.filter(t => t !== ticker); invalidate(); save(); paintChips(); };
+-      $('tickers').append(b);
+-    });
+-  }
+-  function updateTitles() {
+-    ['first', 'second'].forEach(id => { $('title-' + id).textContent = 'Rolling ' + $(id).selectedOptions[0].textContent.toLowerCase() + ' change'; });
+-  }
+-  function destroy() { charts.forEach(c => c.destroy()); charts = []; }
+-  function drawSummary(from, to, mode) {
+-    const container = $('summary-tables'); container.replaceChildren();
+-    for (const ticker of selected) {
+-      const result = summary(history[ticker] || [], from, to, mode);
+-      const card = text('section', '', 'rc-summary-card');
+-      card.append(text('h4', ticker + ' · PRICE'));
+-      card.append(text('p', result.date ? 'As of ' + result.date : 'No prices in selected range', 'rc-hint'));
+-      const table = document.createElement('table'); table.className = 'rc-summary-table';
+-      table.setAttribute('aria-label', ticker + ' rolling price change summary');
+-      const head = table.createTHead().insertRow();
+-      ['ROLL', mode === 'pct' ? 'LATEST (%)' : 'LATEST (UNITS)', '%ILE'].forEach(label => { const th = text('th', label); th.scope = 'col'; head.append(th); });
+-      const body = table.createTBody();
+-      for (const period of result.periods) {
+-        const tr = body.insertRow(); const th = text('th', period.label); th.scope = 'row'; tr.append(th);
+-        const latest = period.latest;
+-        const value = latest === null ? '—' : (latest > 0 ? '+' : '') + latest.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: mode === 'pct' ? 1 : 4 }) + (mode === 'pct' ? '%' : '');
+-        const td = text('td', value); if (latest === null) td.title = 'Insufficient history or a zero percentage base at the latest close.'; tr.append(td);
+-        const rank = text('td', period.percentile === null ? '—' : String(Math.round(period.percentile)));
+-        rank.title = period.count + ' valid observations in the selected date range. Percentile uses average ranks for ties; at least two observations are required.';
+-        if (period.percentile !== null) rank.className = period.percentile <= 10 ? 'rc-percentile-low' : period.percentile >= 90 ? 'rc-percentile-high' : '';
+-        tr.append(rank);
+-      }
+-      card.append(table); container.append(card);
+-    }
+-    $('summary-note').textContent = 'Latest = change at each ticker’s last close on or before the end date. %ile ranks that change against valid daily rolling changes within the selected date range (including the latest; ties use average ranks). Red ≤10th percentile; green ≥90th. Hover over a percentile for its sample count. — means insufficient data. Absolute changes use native price units.';
+-  }
+-  function draw() {
+-    destroy();
+-    $('results').classList.remove('rc-results-empty');
+-    const from = $('from').value, to = $('to').value || new Date().toISOString().slice(0, 10), mode = $('mode').value;
+-    const windows = [$('first').value, $('second').value];
+-    updateTitles();
+-    const labels = [...new Set(Object.values(history).flatMap(rows => rows.filter(r => r.date >= from && r.date <= to).map(r => r.date)))].sort();
+-    const muted = typeof chartText === 'function' ? chartText() : '#666666';
+-    const grid = typeof chartGrid === 'function' ? chartGrid() : '#e5e7eb';
+-    ['price', 'first', 'second'].forEach((id, panel) => {
+-      const datasets = selected.map((ticker, i) => {
+-        const rows = history[ticker] || [], values = panel ? rolling(rows, windows[panel - 1], mode) : rows.map(r => r.value);
+-        const map = new Map(rows.map((r, j) => [r.date, values[j]]));
+-        return { label: ticker, data: labels.map(d => map.has(d) ? map.get(d) : null), borderColor: colors[i % colors.length], borderDash: i < colors.length ? [] : [6, 3 + Math.floor(i / colors.length)], borderWidth: 1.7, pointRadius: 0, pointHitRadius: 7, spanGaps: false };
+-      });
+-      const suffix = panel && mode === 'pct' ? '%' : '';
+-      charts.push(new Chart($('chart-' + id), { type: 'line', data: { labels, datasets }, options: {
+-        responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+-        plugins: { legend: { labels: { color: muted, boxWidth: 15 } }, tooltip: { callbacks: {
+-          label: ctx => ctx.dataset.label + ': ' + Number(ctx.parsed.y).toLocaleString(undefined, { maximumFractionDigits: 4 }) + suffix
+-        } } },
+-        scales: { x: { ticks: { color: muted, maxTicksLimit: 9 }, grid: { display: false } }, y: { title: { display: true, text: panel ? (suffix ? 'Change (%)' : 'Change (price units)') : 'Price (native units)', color: muted }, ticks: { color: muted, callback: v => Number(v).toLocaleString() + suffix }, grid: { color: grid } } }
+-      } }));
+-    });
+-    drawSummary(from, to, mode);
+-  }
+-  async function analyze() {
+-    const today = new Date().toISOString().slice(0, 10);
+-    const from = $('from').value || (range === 'all' ? '0001-01-01' : ''), to = $('to').value || (range === 'all' ? today : '');
+-    if (!selected.length) { $('status').textContent = 'Add at least one ticker.'; return; }
+-    if (!isoDate(from) || !isoDate(to) || from > to || to > today) { $('status').textContent = 'Choose a valid date range ending today or earlier.'; return; }
+-    const earliest = range === 'all'
+-      ? new Date(+isoDate(today) - 2600 * 86400000).toISOString().slice(0, 10)
+-      : [shifted(from, $('first').value), shifted(from, $('second').value), shifted(from, '1y')].sort()[0];
+-    if ((+isoDate(to) - +isoDate(earliest)) / 86400000 > 4000) {
+-      $('status').textContent = 'This range plus its lookback exceeds 4,000 calendar days.'; return;
+-    }
+-    // Keep the displayed cached charts while the server fills gaps.
+-    generation++; if (controller) controller.abort();
+-    const mine = generation; controller = new AbortController(); const signal = controller.signal;
+-    const wanted = selected.slice(), failures = []; $('run').disabled = true;
+-    save();
+-    // Reuse prices already loaded by Chart Builder/Positions immediately.
+-    const shared = sharedHistory();
+-    wanted.forEach(ticker => {
+-      if (!history[ticker] && shared[ticker]) history[ticker] = normalize(shared[ticker]);
+-    });
+-    if (Object.values(history).some(rows => rows.length)) draw();
+-    try {
+-      // One Analyze action; bounded requests and provider-side batches avoid
+-      // URL limits and an unbounded burst of Bloomberg requests.
+-      for (let i = 0; i < wanted.length; i += 100) {
+-        const batch = wanted.slice(i, i + 100);
+-        try {
+-          const params = new URLSearchParams({ tickers: batch.join(','), from: earliest, to, range: '1', predecessor: '1' });
+-          const started = Date.now();
+-          while (true) {
+-            const response = await fetch('/api/bbg-history?' + params, { credentials: 'include', signal });
+-            if (!response.ok) throw new Error('History request failed (' + response.status + ')');
+-            const body = await response.json();
+-            if (!body.ok || !body.data) throw new Error(body.error || 'Saved prices unavailable');
+-            if (mine !== generation) return;
+-            sharePrices(body.data);
+-            let changed = false;
+-            batch.forEach(ticker => {
+-              const rows = normalize(body.data[ticker] || {});
+-              if ((rows.length || !history[ticker]) && JSON.stringify(rows) !== JSON.stringify(history[ticker])) { history[ticker] = rows; changed = true; }
+-            });
+-            if (changed || !charts.length) draw();
+-            $('status').textContent = body.status === 'refreshing'
+-              ? 'Showing saved prices · filling missing dates · ' + Math.min(i + 100, wanted.length) + ' of ' + wanted.length + ' tickers…'
+-              : 'Saved prices loaded.';
+-            if (body.status !== 'refreshing') {
+-              failures.push(...(body.errors || [])); break;
+-            }
+-            if (!body.job || Date.now() - started > 600000) throw new Error('Price update is still running; saved prices remain visible. Select Analyze again shortly.');
+-            params.set('job', body.job);
+-            await new Promise((resolve, reject) => {
+-              const abort = () => { clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')); };
+-              const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 1500);
+-              signal.addEventListener('abort', abort, { once: true });
+-              if (signal.aborted) abort();
+-            });
+-          }
+-        } catch (e) {
+-          if (mine !== generation || e.name === 'AbortError') return;
+-          failures.push(batch.join(', ') + ': ' + e.message);
+-        }
+-      }
+-      if (mine !== generation) return;
+-      draw();
+-      const missing = wanted.filter(t => !(history[t] || []).some(r => r.date >= from && r.date <= to));
+-      const short = wanted.filter(t => {
+-        const rows = history[t] || [];
+-        return rows.some(r => r.date >= from && r.date <= to) && [$('first').value, $('second').value].some(w => {
+-          const values = rolling(rows, w, $('mode').value);
+-          return !rows.some((r, i) => r.date >= from && r.date <= to && values[i] !== null);
+-        });
+-      });
+-      $('status').textContent = (missing.length === wanted.length ? 'No prices available for the selected range.' : 'Saved prices loaded. Changes use calendar periods and the previous available close.')
+-        + (missing.length ? ' No prices: ' + missing.join(', ') + '.' : '')
+-        + (short.length ? ' Insufficient rolling history: ' + short.join(', ') + '.' : '')
+-        + (failures.length ? ' ' + failures.join('; ') : '');
+-    } finally { if (mine === generation) $('run').disabled = false; }
+-  }
+-  root.rcInit = function () {
+-    if (initialized) { charts.forEach(c => c.resize()); return; } initialized = true;
+-    const today = new Date().toISOString().slice(0, 10); $('to').max = today; $('from').max = today;
+-    try {
+-      const current = localStorage.getItem('rollingChange');
+-      const saved = JSON.parse(current || localStorage.getItem('rolling-change-v1') || 'null');
+-      if (saved) {
+-        range = ['all','ytd','1m','3m','6m'].includes(saved.range) ? saved.range : 'custom';
+-        selected = [...new Set((saved.selected || []).map(canonical).filter(Boolean))];
+-        if (isoDate(saved.from)) $('from').value = saved.from;
+-        if (isoDate(saved.to)) $('to').value = saved.to;
+-        if (WINDOWS[saved.first]) $('first').value = saved.first;
+-        if (WINDOWS[saved.second]) $('second').value = saved.second;
+-        if (['pct', 'abs'].includes(saved.mode)) $('mode').value = saved.mode;
+-        if (!current) { save(); localStorage.removeItem('rolling-change-v1'); }
+-      }
+-    } catch (_) {}
+-    const applyRange = () => {
+-      const now = new Date().toISOString().slice(0, 10);
+-      if (range === 'custom') return;
+-      $('to').value = range === 'all' ? '' : now;
+-      $('from').value = range === 'all' ? '' : range === 'ytd' ? now.slice(0, 4) + '-01-01' : shifted(now, range);
+-    };
+-    applyRange();
+-    paintChips(); updateTitles();
+-    const markRange = () => document.querySelectorAll('[data-rc-range]').forEach(b => { b.classList.toggle('active', b.dataset.rcRange === range); b.setAttribute('aria-pressed', String(b.dataset.rcRange === range)); });
+-    markRange();
+-    if (typeof jcapStore !== 'undefined') {
+-      jcapStore.onApply('rollingChange', saved => {
+-        saved = saved || {};
+-        selected = [...new Set((Array.isArray(saved.selected) ? saved.selected : []).map(canonical).filter(Boolean))];
+-        range = ['all','ytd','1m','3m','6m','custom'].includes(saved.range) ? saved.range : 'all';
+-        $('from').value = isoDate(saved.from) ? saved.from : '';
+-        $('to').value = isoDate(saved.to) ? saved.to : '';
+-        $('first').value = WINDOWS[saved.first] ? saved.first : '1m';
+-        $('second').value = WINDOWS[saved.second] ? saved.second : '3m';
+-        $('mode').value = saved.mode === 'abs' ? 'abs' : 'pct';
+-        applyRange(); markRange(); invalidate(); paintChips();
+-      });
+-      jcapStore.syncFromServer();
+-    }
+-    document.querySelectorAll('[data-rc-range]').forEach(b => { b.onclick = () => {
+-      range = b.dataset.rcRange;
+-      const now = new Date().toISOString().slice(0, 10);
+-      $('to').value = range === 'all' ? '' : now;
+-      $('from').value = range === 'all' ? '' : range === 'ytd' ? now.slice(0, 4) + '-01-01' : shifted(now, range);
+-      markRange(); invalidate(); save(); paintChips();
+-    }; });
+-    $('search').onpaste = e => {
+-      const raw = e.clipboardData.getData('text');
+-      if (!/[,;\n\t]/.test(raw)) return;
+-      e.preventDefault();
+-      const entries = raw.split(/[,;\n\t]+/).map(x => x.trim()).filter(Boolean);
+-      const tickers = entries.map(canonical);
+-      if (tickers.some(t => !t)) {
+-        $('status').textContent = 'Use full Bloomberg tickers for a list, separated by commas or new lines. Nothing added.'; return;
+-      }
+-      selected = [...new Set(selected.concat(tickers))];
+-      invalidate(); save(); paintChips(); $('search').value = ''; closeSuggestions();
+-    };
+-    $('search').oninput = suggest; $('search').onfocus = suggest; $('search').onblur = closeSuggestions;
+-    $('search').onkeydown = e => {
+-      if (e.key === 'Escape') { closeSuggestions(); return; }
+-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+-        e.preventDefault(); if ($('suggestions').hidden) suggest();
+-        if (!matches.length) return;
+-        active = Math.max(0, Math.min(matches.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1)));
+-        [...$('suggestions').children].forEach((el, i) => el.setAttribute('aria-selected', String(i === active)));
+-        $('search').setAttribute('aria-activedescendant', 'rc-option-' + active);
+-        $('suggestions').children[active].scrollIntoView({ block: 'nearest' });
+-      }
+-      if (e.key === 'Enter') {
+-        e.preventDefault(); if ($('suggestions').hidden) suggest();
+-        if (active >= 0) add(matches[active].ticker);
+-        else {
+-          const exact = canonical($('search').value), query = $('search').value.trim().toLowerCase();
+-          const match = matches.find(m => m.ticker.toLowerCase() === query || String(m.name).toLowerCase() === query);
+-          if (exact || match || matches.length === 1) add(exact || (match || matches[0]).ticker);
+-          else $('status').textContent = 'Choose a suggestion to confirm the instrument and market.';
+-        }
+-      }
+-    };
+-    $('run').onclick = analyze;
+-    ['from', 'to'].forEach(id => { $(id).onchange = () => { range = 'custom'; markRange(); invalidate(); save(); paintChips(); }; });
+-    ['first', 'second', 'mode'].forEach(id => { $(id).onchange = () => {
+-      // A changed horizon can require older prices: reload before showing results.
+-      if (id === 'mode' && !controller?.signal.aborted && Object.keys(history).length && !$('run').disabled) { draw(); save(); }
+-      else { invalidate(); save(); }
+-    }; });
+-    $('clear').onclick = () => { selected = []; invalidate(); save(); paintChips(); };
+-    $('status').textContent = selected.length ? 'Saved tickers restored. Select Analyze to load prices.' : 'Select tickers to view rolling change analysis';
+-  };
+-})(typeof window === 'undefined' ? globalThis : window);
+diff --git a/serve.py b/serve.py
+index 1acaa42..9a5209b 100644
+--- a/serve.py
++++ b/serve.py
+@@ -8850,34 +8850,6 @@ def _bbg_dispatch(local_fn, pool_fn, *, label="bbg"):
+     return {}
+ 
+ 
+-_daily_price_service = None
+-_daily_price_service_lock = threading.Lock()
+-
+-
+-def _daily_prices():
+-    """Use the existing database and saved history; live requests use the data agent."""
+-    global _daily_price_service
+-    with _daily_price_service_lock:
+-        if _daily_price_service is None:
+-            if not _DB_OK:
+-                raise RuntimeError("Price database unavailable")
+-            from price_history import PriceHistory
+-            def fetch(tickers, start, end):
+-                import bbg_pool
+-                # Preserve null/missing PX_LAST values: the generic history adapter
+-                # coerces them to zero, which would manufacture price observations.
+-                return bbg_pool._bdh(tickers, ["PX_LAST"], start, end)
+-            def mirror(data):
+-                # Existing lock + merge protects all other tabs' cached instruments.
+-                safe_write_json(BBG_HISTORY_CACHE_FILE, {
+-                    "timestamp": datetime.datetime.now().isoformat(), "data": data}, actual_prices=True)
+-            _daily_price_service = PriceHistory(
+-                _db.get_conn, fetch,
+-                [BBG_HISTORY_CACHE_FILE, os.path.join(CACHE_DIR, "bbg_field_history__PX_LAST.json")],
+-                mirror)
+-        return _daily_price_service
+-
+-
+ def _bbg_pool_history(tk_list, field_list=None, days=520, start_date=""):
+     """Pool replacement for bbg_history.ps1 (all modes: default PX_LAST,
+     -StartDate incremental, -Field, -Fields OHLC). Emits the same shape:
+@@ -15412,22 +15384,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
+         if self.path == "/api/bbg-history" or self.path.startswith("/api/bbg-history?"):
+             from urllib.parse import urlparse, parse_qs
+             qs = parse_qs(urlparse(self.path).query)
+-            # Rolling Analysis joins the existing history route with explicit
+-            # bounds. Other tabs retain their current response and refresh rules.
+-            if qs.get("range", ["0"])[0] == "1":
+-                try:
+-                    result = _daily_prices().request(
+-                        [t.strip() for t in qs.get("tickers", [""])[0].split(",") if t.strip()],
+-                        qs.get("from", [""])[0], qs.get("to", [""])[0], qs.get("job", [None])[0],
+-                        **({"predecessor": True} if qs.get("predecessor", ["0"])[0] == "1" else {}))
+-                    result = dict(result, data={t: {"dates": v["dates"], "last": v["values"]}
+-                                              for t, v in result["data"].items()})
+-                    send_json_gzip(self, result)
+-                except ValueError as exc:
+-                    send_json_gzip(self, {"ok": False, "error": str(exc)}, 400)
+-                except Exception:
+-                    send_json_gzip(self, {"ok": False, "error": "Saved history unavailable; please retry."}, 503)
+-                return
+             want_refresh = qs.get("refresh", ["0"])[0] == "1"
+             # `merge=1`: when refreshing with an explicit ticker list, MERGE
+             # the freshly-pulled data into the existing cache rather than
+@@ -15713,20 +15669,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
+         #                refresh=1                   (optional, force re-fetch)
+         # Response:      { ok, field, data: { ticker: { dates: [...], values: [...] } } }
+         # ────────────────────────────────────────────────────────────────
+-        if self.path == "/api/daily-price-history" or self.path.startswith("/api/daily-price-history?"):
+-            from urllib.parse import urlparse, parse_qs
+-            qs = parse_qs(urlparse(self.path).query)
+-            try:
+-                result = _daily_prices().request(
+-                    [t.strip() for t in qs.get("tickers", [""])[0].split(",") if t.strip()],
+-                    qs.get("from", [""])[0], qs.get("to", [""])[0], qs.get("job", [None])[0])
+-                send_json_gzip(self, result)
+-            except ValueError as exc:
+-                send_json_gzip(self, {"ok": False, "error": str(exc)}, 400)
+-            except Exception:
+-                send_json_gzip(self, {"ok": False, "error": "Saved price database unavailable; please retry."}, 503)
+-            return
+-
+         if self.path == "/api/bbg-field-history" or self.path.startswith("/api/bbg-field-history?"):
+             from urllib.parse import urlparse, parse_qs
+             qs = parse_qs(urlparse(self.path).query)
+diff --git a/shared-constants.js b/shared-constants.js
+index b9c4015..4958d98 100644
+--- a/shared-constants.js
++++ b/shared-constants.js
+@@ -97,7 +97,7 @@ const jcapStore = (() => {
+   const KEYS = ['exposureBetas', '_ptBasket', 'pnl-intra-benches', 'anCorrUserTickers',
+     'analyticsBenchmarksList', 'jcap_earn_pin_v1', 'jcap-earn-dismissed-v1', 'csTemplates',
+     'cs-chat-history-v1', 'pxNotes', 'pxBroker', 'cbCharts', 'scHiddenShifts', 'scSpotShiftsHidden',
+-    'pnlWaterfallPrefs', 'jcapXoRemovedSeen', 'rollingChange'];
++    'pnlWaterfallPrefs', 'jcapXoRemovedSeen'];
+   const hooks = {}, timers = {}, pending = {};
+   const lsRaw = k => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+   const lsSet = (k, v) => { try { if (v === undefined || v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
+diff --git a/sw.js b/sw.js
+index 1b0c5b8..56d06f5 100644
+--- a/sw.js
++++ b/sw.js
+@@ -16,10 +16,8 @@
+ // URLs (e.g. /chart.min.js â†’ 302 â†’ /login HTML), which then ran as JS on next
+ // boot and broke the page. v3 forces a clean re-cache and the install handler
+ // below now refuses to cache redirected/non-OK responses.
+-const CACHE_VERSION = 'jcap-risk-v1168';
++const CACHE_VERSION = 'jcap-risk-v1169';
+ const SHELL_FILES = [
+-  '/rolling-change.js',
+-  '/rolling-change.css',
+   '/strikes-history.js',
+   '/',
+   '/index.html',
+diff --git a/tests/test_rolling_cache.py b/tests/test_rolling_cache.py
+deleted file mode 100644
+index 265abab..0000000
+--- a/tests/test_rolling_cache.py
++++ /dev/null
+@@ -1,351 +0,0 @@
+-import datetime as dt
+-import json
+-import os
+-import sqlite3
+-import time
+-
+-from price_history import PriceHistory
+-
+-
+-NOW = dt.datetime(2026, 10, 26, 12, tzinfo=dt.timezone.utc).timestamp()
+-
+-
+-def service(tmp_path, fetch, seed=None, mirror=None):
+-    return PriceHistory(lambda: sqlite3.connect(tmp_path / 'risk.db'), fetch,
+-                        [str(seed)] if seed else [], mirror, clock=lambda: NOW)
+-
+-
+-def test_saved_prices_fill_only_missing_dates(tmp_path):
+-    seed = tmp_path / 'saved.json'
+-    seed.write_text(json.dumps({'data': {'A US Equity': {'dates': ['2026-10-19', '2026-10-21'], 'last': [10, 12]}}}))
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append((tickers, start, end))
+-        return {'A US Equity': [{'date': start, 'PX_LAST': 11}]}
+-    s = service(tmp_path, fetch, seed)
+-    s.seed()
+-    assert s.fill(['A US Equity'], '2026-10-19', '2026-10-21') == []
+-    assert calls == [(['A US Equity'], '2026-10-20', '2026-10-20')]
+-    assert s.read(['A US Equity'], '2026-10-19', '2026-10-21')['A US Equity']['values'] == [10, 11, 12]
+-    s.fill(['A US Equity'], '2026-10-19', '2026-10-21')
+-    assert len(calls) == 1
+-
+-
+-def test_batches_preserve_all_tickers_and_seed_cannot_overwrite(tmp_path):
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append(tickers)
+-        return {t: [{'date': start, 'PX_LAST': 20}] for t in tickers}
+-    s = service(tmp_path, fetch)
+-    names = [f'T{i} US Equity' for i in range(25)]
+-    s.fill(names, '2026-10-23', '2026-10-23')
+-    assert list(map(len, calls)) == [12, 12, 1]
+-    assert all(s.read(names, '2026-10-23', '2026-10-23')[t]['values'] == [20] for t in names)
+-    seed = tmp_path / 'old.json'
+-    seed.write_text(json.dumps({names[0]: {'dates': ['2026-10-23'], 'values': [1]}}))
+-    os.utime(seed, (NOW - 3600, NOW - 3600))
+-    s.seed_paths = [str(seed)]
+-    s.seed()
+-    assert s.read(names[:1], '2026-10-23', '2026-10-23')[names[0]]['values'] == [20]
+-
+-
+-def test_outage_retains_cache_and_retries_gap(tmp_path):
+-    seed = tmp_path / 'old.json'
+-    seed.write_text(json.dumps({'A': {'dates': ['2026-10-22'], 'last': [10]}}))
+-    def offline(*args):
+-        raise RuntimeError('secret vendor error')
+-    s = service(tmp_path, offline, seed)
+-    s.seed()
+-    errors = s.fill(['A'], '2026-10-22', '2026-10-23')
+-    assert 'secret' not in str(errors)
+-    assert s.read(['A'], '2026-10-22', '2026-10-23')['A']['values'] == [10]
+-    assert s.gaps(['A'], '2026-10-22', '2026-10-23') == {'A': [['2026-10-23', '2026-10-23']]}
+-
+-
+-def test_empty_and_null_are_not_permanent_coverage(tmp_path):
+-    s = service(tmp_path, lambda *args: {'A': [], 'B': [{'date': '2026-10-23', 'PX_LAST': None}]})
+-    assert s.fill(['A', 'B'], '2026-10-23', '2026-10-23')
+-    assert 'A' not in s.gaps(['A', 'B'], '2026-10-23', '2026-10-23')
+-    assert 'B' in s.gaps(['A', 'B'], '2026-10-23', '2026-10-23')
+-    s.clock = lambda: NOW + 21601
+-    assert set(s.gaps(['A', 'B'], '2026-10-23', '2026-10-23')) == {'A', 'B'}
+-
+-
+-def test_explicit_zero_and_negative_prices_are_preserved(tmp_path):
+-    s = service(tmp_path, lambda *args: {'A': [{'date': '2026-10-22', 'PX_LAST': 0}, {'date': '2026-10-23', 'PX_LAST': -1}]})
+-    assert not s.fill(['A'], '2026-10-22', '2026-10-23')
+-    assert s.read(['A'], '2026-10-22', '2026-10-23')['A']['values'] == [0, -1]
+-
+-
+-def test_cache_first_and_shared_inflight_job(tmp_path):
+-    import threading
+-    entered, release = threading.Event(), threading.Event()
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append(tickers)
+-        entered.set()
+-        assert release.wait(3)
+-        return {'A': [{'date': start, 'PX_LAST': 11}]}
+-    s = service(tmp_path, fetch)
+-    a = s.request(['A'], '2026-10-23', '2026-10-23')
+-    assert a['status'] == 'refreshing'
+-    assert entered.wait(3)
+-    b = s.request(['A'], '2026-10-23', '2026-10-23')
+-    assert b['job'] == a['job']
+-    release.set()
+-    for _ in range(100):
+-        result = s.request(['A'], '2026-10-23', '2026-10-23', a['job'])
+-        if result['status'] != 'refreshing':
+-            break
+-        time.sleep(.01)
+-    assert result['status'] == 'complete'
+-    assert result['data']['A']['values'] == [11]
+-    assert len(calls) == 1
+-    assert s.request(['A'], '2026-10-23', '2026-10-23')['status'] == 'cached'
+-
+-
+-def test_current_day_refreshes_but_historical_bars_do_not(tmp_path):
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append(start)
+-        return {'A': [{'date': start, 'PX_LAST': 10}]}
+-    s = service(tmp_path, fetch)
+-    s.fill(['A'], '2026-10-26', '2026-10-26')
+-    s.fill(['A'], '2026-10-26', '2026-10-26')
+-    assert len(calls) == 1
+-    s.clock = lambda: NOW + 301
+-    s.fill(['A'], '2026-10-26', '2026-10-26')
+-    assert len(calls) == 2
+-
+-
+-def test_longer_range_fetches_prefix_only(tmp_path):
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append((start, end))
+-        return {'A': [{'date': start, 'PX_LAST': 10}, {'date': end, 'PX_LAST': 12}]}
+-    s = service(tmp_path, fetch)
+-    s.fill(['A'], '2026-10-22', '2026-10-23')
+-    s.fill(['A'], '2026-10-19', '2026-10-23')
+-    assert calls == [('2026-10-22', '2026-10-23'), ('2026-10-19', '2026-10-21')]
+-
+-
+-def test_provisional_price_is_finalized_after_rollover(tmp_path):
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append(start)
+-        return {'A': [{'date': start, 'PX_LAST': 10 + len(calls)}]}
+-    s = service(tmp_path, fetch)
+-    s.fill(['A'], '2026-10-26', '2026-10-26')
+-    s.clock = lambda: NOW + 86400
+-    s.fill(['A'], '2026-10-26', '2026-10-26')
+-    assert len(calls) == 2
+-    assert s.read(['A'], '2026-10-26', '2026-10-26')['A']['values'] == [12]
+-    s.clock = lambda: NOW + 172800
+-    assert not s.gaps(['A'], '2026-10-26', '2026-10-26')
+-
+-
+-def test_truncated_nonempty_response_retries_omitted_dates(tmp_path):
+-    s = service(tmp_path, lambda *args: {'A': [{'date': '2026-10-19', 'PX_LAST': 10}]})
+-    assert s.fill(['A'], '2026-10-19', '2026-10-23')
+-    s.clock = lambda: NOW + 21601
+-    assert s.gaps(['A'], '2026-10-19', '2026-10-23') == {'A': [['2026-10-20', '2026-10-23']]}
+-
+-
+-def test_newer_shared_cache_correction_propagates(tmp_path):
+-    s = service(tmp_path, lambda *args: {'A': [{'date':'2026-10-23','PX_LAST':10}]})
+-    s.fill(['A'], '2026-10-23', '2026-10-23')
+-    seed = tmp_path / 'corrected.json'
+-    seed.write_text(json.dumps({'timestamp':'2026-10-27T12:00:00+00:00','data':{'A':{'dates':['2026-10-23'],'last':[25]}}}))
+-    s.seed_paths = [str(seed)]
+-    s.seed()
+-    assert s.read(['A'], '2026-10-23', '2026-10-23')['A']['values'] == [25]
+-
+-
+-def test_mirror_keeps_other_tickers_zero_and_new_observations(tmp_path):
+-    import ast
+-    import threading
+-    from pathlib import Path
+-    source = Path(__file__).parents[1].joinpath('serve.py').read_text(encoding='utf-8')
+-    fn = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'safe_write_json')
+-    ns = {'os': os, 'json': json, '_PRICE_CACHE_WRITE_LOCK': threading.RLock(),
+-          '_atomic_write_json': lambda p, v, indent: Path(p).write_text(json.dumps(v))}
+-    exec(compile(ast.Module(body=[fn], type_ignores=[]), 'isolated-mirror', 'exec'), ns)
+-    p = tmp_path / 'bbg_history_cache.json'
+-    p.write_text(json.dumps({'data': {'A': {'dates': ['2026-10-22'], 'last': [9], 'validThrough': '2026-10-22'}, 'B': {'dates': ['2026-10-23'], 'last': [5]}}}))
+-    ns['safe_write_json'](str(p), {'data': {'A': {'dates': ['2026-10-22', '2026-10-23'], 'last': [0, 10]}}}, actual_prices=True)
+-    data = json.loads(p.read_text())['data']
+-    assert data['A']['last'] == [0, 10]
+-    assert data['B']['last'] == [5]
+-    ns['safe_write_json'](str(p), {'data': {'A': {'dates': ['2026-10-19'], 'last': [8]}}}, actual_prices=True)
+-    assert json.loads(p.read_text())['data']['A']['dates'][-1] == '2026-10-23'
+-
+-
+-def test_overlapping_jobs_fetch_common_ticker_once(tmp_path):
+-    import threading
+-    calls = []
+-    def fetch(tickers, start, end):
+-        calls.append(tickers)
+-        return {t: [{'date': start, 'PX_LAST': 10}] for t in tickers}
+-    s = service(tmp_path, fetch)
+-    a = threading.Thread(target=lambda: s.fill(['A', 'B'], '2026-10-23', '2026-10-23'))
+-    b = threading.Thread(target=lambda: s.fill(['B', 'C'], '2026-10-23', '2026-10-23'))
+-    a.start(); b.start(); a.join(3); b.join(3)
+-    assert not a.is_alive() and not b.is_alive()
+-    assert sum(batch.count('B') for batch in calls) == 1
+-
+-
+-def test_actual_route_parses_range_and_polling_without_server_import(tmp_path):
+-    import textwrap
+-    from pathlib import Path
+-    source = Path(__file__).parents[1].joinpath('serve.py').read_text(encoding='utf-8')
+-    start = source.index('        if self.path == "/api/daily-price-history"')
+-    end = source.index('        if self.path == "/api/bbg-field-history"', start)
+-    calls, replies = [], []
+-    class Service:
+-        def request(self, *args):
+-            calls.append(args)
+-            return {'ok': True, 'status': 'cached', 'data': {}}
+-    ns = {'_daily_prices': Service, 'send_json_gzip': lambda _, payload, *status: replies.append(payload)}
+-    exec('def route(self):\n' + textwrap.indent(textwrap.dedent(source[start:end]), '    '), ns)
+-    ns['route'](type('Request', (), {'path': '/api/daily-price-history?tickers=A%20US%20Equity,B%20US%20Equity&from=2026-01-01&to=2026-10-23&job=abc'})())
+-    assert calls == [(['A US Equity', 'B US Equity'], '2026-01-01', '2026-10-23', 'abc')]
+-    assert replies[0]['status'] == 'cached'
+-
+-
+-def test_delayed_seed_keeps_capture_day_provisional(tmp_path):
+-    seed = tmp_path / 'old-intraday.json'
+-    seed.write_text(json.dumps({'timestamp': '2026-10-23T12:00:00+00:00', 'data': {'A': {'dates': ['2026-10-23'], 'last': [10]}}}))
+-    s = service(tmp_path, lambda *args: {'A': [{'date': '2026-10-23', 'PX_LAST': 12}]}, seed)
+-    s.seed()
+-    assert s.gaps(['A'], '2026-10-23', '2026-10-23') == {'A': [['2026-10-23', '2026-10-23']]}
+-    s.fill(['A'], '2026-10-23', '2026-10-23')
+-    assert s.read(['A'], '2026-10-23', '2026-10-23')['A']['values'] == [12]
+-
+-
+-def test_unrelated_cache_rewrite_cannot_finalize_same_provisional_bar(tmp_path):
+-    s = service(tmp_path, lambda *args: {'A': [{'date': '2026-10-26', 'PX_LAST': 10}]})
+-    s.fill(['A'], '2026-10-26', '2026-10-26')
+-    s.clock = lambda: NOW + 172800
+-    seed = tmp_path / 'rewritten.json'
+-    seed.write_text(json.dumps({'timestamp': '2026-10-28T12:00:00+00:00', 'data': {'A': {'dates': ['2026-10-26'], 'last': [10]}, 'B': {'dates': ['2026-10-27'], 'last': [5]}}}))
+-    s.seed_paths = [str(seed)]
+-    s.seed()
+-    assert s.gaps(['A'], '2026-10-26', '2026-10-26') == {'A': [['2026-10-26', '2026-10-26']]}
+-
+-
+-def test_shared_history_route_keeps_other_tabs_and_history_shape():
+-    import textwrap
+-    from pathlib import Path
+-    source = Path(__file__).parents[1].joinpath('serve.py').read_text(encoding='utf-8')
+-    start = source.index('        if self.path == "/api/bbg-history"')
+-    end = source.index('            want_refresh =', start)
+-    calls, replies = [], []
+-    class Service:
+-        def request(self, *args, **kwargs):
+-            calls.append(args + ((kwargs,) if kwargs else ()))
+-            return {'ok': True, 'status': 'cached', 'data': {'A': {'dates': ['2026-10-23'], 'values': [10]}}}
+-    ns = {'_daily_prices': Service, 'send_json_gzip': lambda _, payload, *status: replies.append(payload)}
+-    code = 'def route(self):\n' + textwrap.indent(textwrap.dedent(source[start:end]), '    ') + '\n    return "existing flow"\n'
+-    exec(code, ns)
+-    request = type('Request', (), {})()
+-    request.path = '/api/bbg-history?range=1&tickers=A&from=2026-10-01&to=2026-10-23'
+-    ns['route'](request)
+-    assert calls == [(['A'], '2026-10-01', '2026-10-23', None)]
+-    assert replies[0]['data']['A'] == {'dates': ['2026-10-23'], 'last': [10]}
+-    request.path = '/api/bbg-history?refresh=1&merge=1&tickers=A'
+-    assert ns['route'](request) == 'existing flow'
+-    assert len(calls) == 1
+-
+-
+-
+-    request.path = '/api/bbg-history?range=1&predecessor=1&tickers=A&from=2026-10-01&to=2026-10-23'
+-    ns['route'](request)
+-    assert calls[-1][-1] == {'predecessor': True}
+-
+-
+-def test_predecessor_cached_weekend_and_exact_boundary(tmp_path):
+-    calls = []
+-    def fetch(names, a, b):
+-        calls.append((names, a, b))
+-        return {t: [{'date': a, 'PX_LAST': 100}] for t in names}
+-    s = service(tmp_path, fetch)
+-    s.fill(['A'], '2025-10-24', '2025-10-24')
+-    calls.clear()
+-    assert s.fill_predecessors(['A'], '2025-10-26') == []
+-    assert not calls
+-    assert s.read(['A'], '2025-10-26', '2025-10-26', predecessor=True)['A']['dates'] == ['2025-10-24']
+-    assert s.read(['A'], '2025-10-26', '2025-10-26')['A']['dates'] == []
+-    assert s.fill_predecessors(['A'], '2025-10-24') == []
+-    assert not calls
+-
+-
+-def test_predecessor_search_fills_between_old_cache_and_boundary(tmp_path):
+-    calls = []
+-    bars = [{'date': '2025-09-01', 'PX_LAST': 90}, {'date': '2025-10-10', 'PX_LAST': 100}]
+-    def fetch(names, a, b):
+-        calls.append((a, b))
+-        return {t: [r for r in bars if a <= r['date'] <= b] for t in names}
+-    s = service(tmp_path, fetch)
+-    s.fill(['A'], '2025-09-01', '2025-09-01')
+-    s.fill_predecessors(['A'], '2025-10-26')
+-    assert s.read(['A'], '2025-10-26', '2025-10-26', predecessor=True)['A']['values'] == [100]
+-    count = len(calls)
+-    s.fill_predecessors(['A'], '2025-10-26')
+-    assert len(calls) == count
+-    assert s.read(['A'], '2025-09-01', '2025-09-01')['A']['values'] == [90]
+-
+-
+-def test_predecessor_missing_cache_expands_and_batches(tmp_path):
+-    calls = []
+-    def fetch(names, a, b):
+-        calls.append((names, a, b))
+-        return {t: ([{'date': '2025-10-10', 'PX_LAST': 100}] if a <= '2025-10-10' <= b else []) for t in names}
+-    s = service(tmp_path, fetch)
+-    names = ['T' + str(i) for i in range(25)]
+-    s.fill_predecessors(names, '2025-10-26')
+-    assert max(len(c[0]) for c in calls) <= 12
+-    assert all(v['values'] == [100] for v in s.read(names, '2025-10-26', '2025-10-26', predecessor=True).values())
+-
+-
+-def test_predecessor_outage_stops_without_unbounded_retries(tmp_path):
+-    calls = []
+-    def fetch(*args):
+-        calls.append(args)
+-        raise RuntimeError('offline')
+-    s = service(tmp_path, fetch)
+-    assert 'unavailable' in s.fill_predecessors(['A'], '2025-10-26')[0]
+-    assert len(calls) == 1
+-
+-
+-def test_request_returns_fetched_predecessor_on_poll(tmp_path):
+-    bars = [{'date': '2025-10-24', 'PX_LAST': 100}]
+-    s = service(tmp_path, lambda names, a, b: {t: [r for r in bars if a <= r['date'] <= b] for t in names})
+-    result = s.request(['A'], '2025-10-26', '2025-10-26', predecessor=True)
+-    deadline = time.monotonic() + 3
+-    while result['status'] == 'refreshing' and time.monotonic() < deadline:
+-        time.sleep(.01)
+-        result = s.request(['A'], '2025-10-26', '2025-10-26', job=result['job'], predecessor=True)
+-    assert result['status'] != 'refreshing'
+-    assert result['data']['A'] == {'dates': ['2025-10-24'], 'values': [100]}
+-
+-
+-def test_predecessor_refreshes_provisional_close(tmp_path):
+-    calls = []
+-    def fetch(names, a, b):
+-        calls.append((a, b))
+-        return {'A': [{'date': '2026-10-23', 'PX_LAST': 12}]}
+-    s = service(tmp_path, fetch)
+-    with s.connect() as c:
+-        c.execute('INSERT INTO daily_prices VALUES (?,?,?,?,?,?)', ('A', 'PX_LAST', '2026-10-23', 10, NOW - 172800, 1))
+-    s.fill_predecessors(['A'], '2026-10-25')
+-    assert calls == [('2026-10-23', '2026-10-23')]
+-    assert s.read(['A'], '2026-10-25', '2026-10-25', predecessor=True)['A']['values'] == [12]
+-
+-
+-def test_predecessor_one_bad_ticker_does_not_block_healthy_long_gap(tmp_path):
+-    def fetch(names, a, b):
+-        return {t: ([{'date': '2025-10-10', 'PX_LAST': 100}] if a <= '2025-10-10' <= b else []) for t in names if t != 'BAD'}
+-    s = service(tmp_path, fetch)
+-    errors = s.fill_predecessors(['BAD', 'GOOD'], '2025-10-26')
+-    assert 'No valid provider response for BAD' in errors
+-    assert s.read(['GOOD'], '2025-10-26', '2025-10-26', predecessor=True)['GOOD']['values'] == [100]
+diff --git a/tests/test_rolling_change.js b/tests/test_rolling_change.js
+deleted file mode 100644
+index a0d7ed0..0000000
+--- a/tests/test_rolling_change.js
++++ /dev/null
+@@ -1,215 +0,0 @@
+-// Deterministic math and real Chart.js UI tests; no live Bloomberg connection.
+-const assert = require('node:assert/strict');
+-const fs = require('node:fs');
+-const path = require('node:path');
+-const { canonical, shifted, normalize, rolling, percentile, summary } = require('../rolling-change.js');
+-assert.equal(canonical('  aapl   us EQUITY '), 'AAPL US Equity');
+-assert.equal(canonical('<script>'), null);
+-assert.equal(shifted('2024-03-31', '1m'), '2024-02-29');
+-assert.equal(shifted('2025-03-31', '1m'), '2025-02-28');
+-assert.equal(shifted('2024-02-29', '1y'), '2023-02-28');
+-const boundaryRows = [{date:'2025-01-03',value:100},{date:'2025-01-06',value:110},{date:'2026-01-05',value:120},{date:'2026-01-06',value:121}];
+-assert.deepEqual(summary(boundaryRows,'2026-01-05','2026-01-06','abs').periods[3], {label:'12M',latest:11,percentile:0,count:2});
+-const rows = normalize({ dates: ['2026-02-02', '2026-01-02', '2026-01-30', '2026-01-02', '2026-02-03', 'invalid'], values: [120, 90, 110, 100, null, 200] });
+-assert.deepEqual(rows.map(r => r.value), [100, 110, 120]);
+-assert.deepEqual(rolling(rows, '1m', 'abs'), [null, null, 20]);
+-assert.ok(Math.abs(rolling(rows, '1m', 'pct')[2] - 20) < 1e-10);
+-// Sunday 1 Feb maps to Friday 30 Jan; an insufficient lookback stays null.
+-const holidays = [{ date: '2026-01-30', value: 100 }, { date: '2026-03-01', value: 125 }];
+-assert.deepEqual(rolling(holidays, '1m', 'abs'), [null, 25]);
+-assert.deepEqual(rolling([{ date: '2026-01-01', value: 0 }, { date: '2026-02-01', value: 5 }], '1m', 'pct'), [null, null]);
+-assert.deepEqual(rolling([{ date: '2026-01-01', value: 0 }, { date: '2026-02-01', value: 5 }], '1m', 'abs'), [null, 5]);
+-
+-assert.equal(percentile(1, [1, 2, 3]), 0);
+-assert.equal(percentile(3, [1, 2, 3]), 100);
+-assert.equal(percentile(2, [1, 2, 2, 3]), 50);
+-assert.equal(percentile(2, [2, 2, 2]), 50);
+-assert.equal(percentile(null, [1, 2]), null);
+-assert.equal(percentile(1, [null, 1]), null);
+-const sampleRows = [{date:'2025-01-01',value:100},{date:'2025-02-01',value:110},{date:'2025-03-01',value:99},{date:'2025-04-01',value:120}];
+-const snap = summary(sampleRows, '2025-02-01', '2025-03-31', 'abs');
+-assert.equal(snap.date, '2025-03-01');
+-assert.equal(snap.periods[0].latest, -11);
+-assert.equal(snap.periods[0].percentile, 0);
+-assert.equal(snap.periods[0].count, 2);
+-assert.equal(snap.periods[3].latest, null);
+-assert.equal(summary(sampleRows, '2026-01-01', '2026-02-01', 'pct').date, null);
+-assert.equal(summary([{date:'2025-01-01',value:100},{date:'2025-02-01',value:0},{date:'2025-03-01',value:5}], '', '2025-03-01', 'pct').periods[0].latest, null);
+-
+-async function ui() {
+-  const { chromium } = require('playwright');
+-  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+-  try {
+-    const page = await browser.newPage({ viewport: { width: 1440, height: 1300 } });
+-    const errors = []; page.on('pageerror', e => errors.push(e.message));
+-    const root = path.resolve(__dirname, '..'), source = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+-    const start = source.indexOf('  <!-- Rolling change analysis -->');
+-    const pane = source.slice(start, source.indexOf('  <!-- Database Tab -->', start));
+-    assert.match(source, /data-tab="chartbuilder"[^\n]+\n[^\n]+data-tab="rollingchange"[^\n]+\n[^\n]+data-tab="database"/);
+-    const css = [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m => m[1]).join('\n');
+-    const calls = [];
+-    let fail = false, hold = false, progressive = false, release;
+-    await page.route('http://rolling.test/**', async route => {
+-      const url = new URL(route.request().url());
+-      if (!url.pathname.startsWith('/api/')) { await route.fulfill({ contentType: 'text/html', body: '<html></html>' }); return; }
+-      if (url.pathname === '/api/config') { await route.fulfill({contentType:'application/json',body:JSON.stringify({config:{}})}); return; }
+-      calls.push(url);
+-      if (hold) await new Promise(r => { release = r; });
+-      if (fail) { await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Agent offline"}' }); return; }
+-      const data = {};
+-      for (const ticker of url.searchParams.get('tickers').split(',')) {
+-        if (ticker.startsWith('MISSING')) continue;
+-        const dates = [], values = [];
+-        for (let d = new Date('2025-01-01T00:00:00Z'), i = 0; d <= new Date('2026-10-26T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1), i++) {
+-          if (![0, 6].includes(d.getUTCDay())) { dates.push(d.toISOString().slice(0, 10)); values.push(100 + i / 10); }
+-        }
+-        data[ticker] = { dates, last: values };
+-      }
+-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, status: progressive && !url.searchParams.has('job') ? 'refreshing' : 'cached', job:'test-job', data }) });
+-    });
+-    await page.goto('http://rolling.test/');
+-    await page.setContent('<style>' + css + '\n' + fs.readFileSync(path.join(root, 'rolling-change.css'), 'utf8') + '</style>' + pane);
+-    await page.addScriptTag({ path: path.join(root, 'chart.min.js') });
+-    await page.evaluate(() => {
+-      const select = document.createElement('select'); select.id = 'pos-ticker'; select.hidden = true;
+-      [['AAPL US Equity','Apple Inc'],['700 HK Equity','Tencent'],['SPX Index','S&P 500']].forEach(([v,t]) => select.add(new Option(t,v)));
+-      document.body.append(select);
+-    });
+-    const opts = source.slice(source.indexOf('function _posTickerOptions()'), source.indexOf('// Focus behaviour', source.indexOf('function _posTickerOptions()')));
+-    const matcher = source.slice(source.indexOf('function _posTickerMatches('), source.indexOf('function _posTickerFilter()', source.indexOf('function _posTickerMatches(')));
+-    const refresh = source.slice(source.indexOf('function _posRefreshTickerOptions()'), source.indexOf('// Best-effort match', source.indexOf('function _posRefreshTickerOptions()')));
+-    await page.addScriptTag({content: `
+-      let HISTORY={data:{'OTHER US Equity':{dates:['2024-01-02'],last:[9]}}};
+-      let posLoaded=false, _posOptionsDataRef=null, _posOptionsLatestDate='';
+-      const DATA={dates:['10/26/2026'],records:[
+-        {'Position Scenario Date':'10/26/2026',Strategy:'CORE','Underlying Security':'AAPL US Equity'},
+-        {'Position Scenario Date':'10/26/2026',Strategy:'CORE','Underlying Security':'700 HK Equity'},
+-        {'Position Scenario Date':'10/26/2026',Strategy:'HEDGING','Underlying Security':'SPX Index'}]};
+-      const resolveUnderlying=t=>t;
+-      const getName=t=>({'AAPL US Equity':'Apple Inc','700 HK Equity':'Tencent','SPX Index':'S&P 500'}[t]);
+-    ` + refresh + '\n' + opts + '\n' + matcher});
+-    await page.locator('#pos-ticker').evaluate(el => el.replaceChildren());
+-    const shared = fs.readFileSync(path.join(root, 'shared-constants.js'), 'utf8');
+-    const begin = shared.indexOf('const jcapStore =');
+-    const store = shared.slice(begin, shared.indexOf('})();', begin)+5);
+-    await page.addScriptTag({content:store});
+-    await page.addScriptTag({ path: path.join(root, 'rolling-change.js') });
+-    await page.evaluate(() => { document.querySelector('.tab-pane').classList.add('active'); rcInit(); });
+-    assert.equal(await page.locator('#rc-settings').isVisible(), true);
+-    assert.equal(await page.locator('#rc-mode').isVisible(), true);
+-    await page.selectOption('#rc-mode', 'abs');
+-    assert.equal(await page.inputValue('#rc-mode'), 'abs');
+-    await page.selectOption('#rc-mode', 'pct');
+-    assert.equal(await page.locator('#rc-results').isVisible(), true);
+-    assert.equal(await page.locator('#rc-title-first').isVisible(), true);
+-    assert.equal(await page.locator('#rc-chart-first').isVisible(), false);
+-    assert.match(source, /href="rolling-change.css\?v=1168"/);
+-    assert.match(source, /src="rolling-change.js\?v=1168"/);
+-    if (process.env.RC_PREVIEW_DIR) await page.screenshot({path:path.join(process.env.RC_PREVIEW_DIR,'rolling-change-empty.png')});
+-    await page.click('[data-rc-range="1m"]');
+-    assert.equal(await page.inputValue('#rc-from'), shifted(new Date().toISOString().slice(0,10), '1m'));
+-    await page.click('[data-rc-range="all"]');
+-    assert.equal(await page.inputValue('#rc-from'), '');
+-    assert.equal(await page.inputValue('#rc-first'), '1m'); assert.equal(await page.inputValue('#rc-second'), '3m');
+-    await page.fill('#rc-search', 'Apple');
+-    await page.getByRole('option', { name: /Apple Inc.*AAPL US Equity/ }).click();
+-    await page.fill('#rc-search', 'spx'); await page.press('#rc-search', 'ArrowDown'); await page.press('#rc-search', 'Enter');
+-    await page.fill('#rc-search', '700 hk'); await page.press('#rc-search', 'ArrowDown'); await page.press('#rc-search', 'Enter');
+-    assert.equal(await page.locator('.rc-chip').count(), 3);
+-    await page.fill('#rc-search', 'Apple'); await page.press('#rc-search', 'Escape');
+-    await page.fill('#rc-from', '2026-01-01'); await page.fill('#rc-to', '2026-10-26');
+-    await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.match(await page.textContent('#rc-status'), /Saved prices loaded/);
+-    assert.equal(calls[0].pathname, '/api/bbg-history');
+-    assert.equal(calls[0].searchParams.has('refresh'), false);
+-    assert.equal(calls[0].searchParams.get('range'), '1');
+-    assert.ok(await page.evaluate(() => HISTORY.data['AAPL US Equity'].last.length > 0));
+-    assert.deepEqual(await page.evaluate(() => HISTORY.data['OTHER US Equity'].last), [9]);
+-    assert.equal(calls[0].searchParams.get('from'), '2025-01-01');
+-    assert.equal(calls[0].searchParams.get('to'), '2026-10-26');
+-    const chartInfo = () => page.evaluate(() => ['price','first','second'].map(id => {
+-      const chart = Chart.getChart(document.getElementById('rc-chart-' + id));
+-      return { count: chart.data.datasets.length, values: chart.data.datasets[0].data, title: chart.options.scales.y.title.text };
+-    }));
+-    assert.equal(await page.locator('.rc-summary-table').count(), 3);
+-    assert.equal(await page.locator('.rc-summary-table tbody tr').count(), 12);
+-    assert.match(await page.locator('.rc-summary-table tbody td').first().textContent(), /%/);
+-    let info = await chartInfo(); assert.ok(info.every(c => c.count === 3)); assert.ok(info[1].values.some(v => v !== null));
+-    await page.selectOption('#rc-mode', 'abs'); info = await chartInfo(); assert.equal(info[1].title, 'Change (price units)');
+-    assert.equal(info[2].title, 'Change (price units)');
+-    assert.equal((await page.locator('.rc-summary-table tbody td').first().textContent()).includes('%'), false);
+-    await page.selectOption('#rc-mode', 'pct'); info = await chartInfo();
+-    assert.equal(info[1].title, 'Change (%)'); assert.equal(info[2].title, 'Change (%)');
+-    assert.equal(info[0].title, 'Price (native units)');
+-    await page.selectOption('#rc-mode', 'abs');
+-    assert.equal(calls.length, 1, 'mode switch needs no new data');
+-    await page.selectOption('#rc-first', '6m');
+-    assert.equal(await page.evaluate(() => !!Chart.getChart(document.getElementById('rc-chart-first'))), false, 'changed horizon clears stale results');
+-    await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.equal(await page.textContent('#rc-title-first'), 'Rolling 6 months change');
+-    if (process.env.RC_PREVIEW_DIR) await page.screenshot({ path: path.join(process.env.RC_PREVIEW_DIR, 'rolling-change-desktop.png'), fullPage: true });
+-    await page.setViewportSize({ width: 390, height: 844 });
+-    await page.waitForTimeout(300);
+-    if (process.env.RC_PREVIEW_DIR) await page.screenshot({ path: path.join(process.env.RC_PREVIEW_DIR, 'rolling-change-mobile.png'), fullPage: true });
+-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true,
+-      JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#pane-rollingchange *')].filter(e => e.getBoundingClientRect().right > innerWidth).map(e => [e.id || e.className || e.tagName, e.getBoundingClientRect().width]).slice(0, 12))));
+-    await page.setViewportSize({ width: 1440, height: 1300 });
+-    await page.getByRole('button', { name: 'Remove 700 HK Equity' }).click(); assert.equal(await page.locator('.rc-chip').count(), 2);
+-    await page.fill('#rc-search', 'MISSING US Equity'); await page.press('#rc-search', 'Enter');
+-    await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.match(await page.textContent('#rc-status'), /No prices: MISSING US Equity/);
+-    assert.deepEqual(await page.locator('.rc-summary-table').last().locator('tbody td').allTextContents(), Array(8).fill('\u2014'));
+-    fail = true; await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.match(await page.textContent('#rc-status'), /503/);
+-    assert.ok((await chartInfo())[0].values.some(v => v !== null), 'failure retains rendered prices'); fail = false;
+-    hold = true; await page.click('#rc-run');
+-    await page.waitForTimeout(100); await page.click('#rc-clear'); if (release) release(); hold = false;
+-    await page.waitForTimeout(100);
+-    assert.equal(await page.locator('#rc-title-first').isVisible(), true);
+-    assert.equal(await page.locator('.rc-chip').count(), 0); assert.equal(await page.textContent('#rc-status'), 'Select tickers to view rolling change analysis');
+-    assert.equal(await page.locator('.rc-summary-table').count(), 0);
+-    const beforeBatch = calls.length;
+-    for (let i = 0; i < 13; i++) { await page.fill('#rc-search', 'RC' + i + ' US Equity'); await page.press('#rc-search', 'Enter'); }
+-    await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.equal(calls.length - beforeBatch, 1, 'provider batching is server-side');
+-    assert.equal((await chartInfo())[0].count, 13);
+-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('rollingChange')).selected.length), 13);
+-    await page.click('[data-rc-range="all"]');
+-    await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.equal((+new Date(calls.at(-1).searchParams.get('to')) - +new Date(calls.at(-1).searchParams.get('from'))) / 86400000, 2600);
+-    assert.match(await page.textContent('#rc-status'), /Saved prices loaded/);
+-    await page.click('#rc-clear');
+-    await page.locator('#rc-search').evaluate(el => {
+-      const d = new DataTransfer(); d.setData('text/plain', Array.from({length:101}, (_,i) => 'BULK'+i+' US Equity').join('\n'));
+-      el.dispatchEvent(new ClipboardEvent('paste', {clipboardData:d, bubbles:true, cancelable:true}));
+-    });
+-    assert.equal(await page.locator('.rc-chip').count(), 101);
+-    const beforeBulk = calls.length;
+-    await page.click('#rc-run'); await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.equal(calls.length-beforeBulk, 2);
+-    assert.equal(calls[beforeBulk].searchParams.get('tickers').split(',').length, 100);
+-    await page.evaluate(() => jcapStore.applyServer({'desk.rollingChange': {selected:['AAPL US Equity'],range:'1m',from:'2025-01-01',to:'2025-02-01',first:'1m',second:'3m',mode:'pct'}}));
+-    assert.equal(await page.locator('.rc-chip').count(), 1);
+-    assert.equal(await page.inputValue('#rc-to'), new Date().toISOString().slice(0,10));
+-    // Previously loaded prices must render before a history response arrives.
+-    await page.evaluate(() => { HISTORY.data['AAPL US Equity']={dates:['2026-10-23'],last:[999]}; });
+-    hold = true;
+-    await page.click('#rc-run');
+-    await page.waitForFunction(() => Chart.getChart(document.getElementById('rc-chart-price'))?.data.datasets[0].data.includes(999));
+-    assert.equal(await page.locator('#rc-run').isDisabled(), true);
+-    await page.waitForTimeout(100);
+-    if (release) release(); hold = false;
+-    await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    progressive = true;
+-    const beforePoll = calls.length;
+-    await page.click('#rc-run');
+-    await page.waitForFunction(() => document.getElementById('rc-status').textContent.includes('filling missing dates') && Chart.getChart(document.getElementById('rc-chart-price'))?.data.datasets[0].data.some(v => v !== null));
+-    assert.match(await page.textContent('#rc-status'), /filling missing dates/);
+-    await page.waitForFunction(() => !document.getElementById('rc-run').disabled);
+-    assert.equal(calls.length-beforePoll, 2, 'cached chart renders before final job poll');
+-    assert.equal(calls.at(-1).searchParams.get('job'), 'test-job');
+-    assert.deepEqual(errors, []);
+-    console.log('Rolling change: math, smart input, real charts, modes, periods, missing data, agent failure, cancellation and mobile layout passed.');
+-  } finally { await browser.close(); }
+-}
+-ui().catch(e => { console.error(e); process.exitCode = 1; });
+-- 
+2.54.0.windows.1
+
