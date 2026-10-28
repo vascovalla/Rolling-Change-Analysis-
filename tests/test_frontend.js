@@ -154,6 +154,7 @@ async function ui() {
     await checkSearchBox();
     await page.press('#rc-search','Escape');
     assert.equal(await page.locator('#rc-settings').isVisible(),true);
+    assert.equal(await page.locator('[data-rc-price-scale=raw]').getAttribute('aria-pressed'),'true');
     assert.equal(await page.locator('#rc-chart-first').isVisible(),false);
     await page.click('[data-rc-range="1m"]');
     assert.equal(await page.inputValue('#rc-from'),shifted(new Date().toISOString().slice(0,10),'1m'));
@@ -199,6 +200,28 @@ async function ui() {
     assert.equal(calls[0].searchParams.get('range'),'1');
     assert.equal(calls[0].searchParams.get('to'),'2026-10-26');
     let info = await charts(); assert.ok(info.every(c=>c.count===3));
+    assert.equal(info[0].title,'Rebased (100)','multiple tickers default to rebased overlay');
+    assert.ok(info[0].values.filter(v=>v!==null)[0]===100);
+    const priceTooltip = await page.evaluate(()=>{
+      const c=Chart.getChart(document.getElementById('rc-chart-price')),ds=c.data.datasets[0];
+      const i=ds.data.findIndex(v=>v!==null);
+      return c.options.plugins.tooltip.callbacks.label({dataset:ds,dataIndex:i,parsed:{y:ds.data[i]}});
+    });
+    assert.match(priceTooltip,/Price: 136\.7/,'scaled price tooltip retains the native price');
+    const scaleFetches=calls.length, rollingBefore=info[1].values;
+    await page.click('[data-rc-price-scale=pct]'); info=await charts();
+    assert.equal(info[0].title,'Change from start (%)');
+    assert.equal(info[0].values.find(v=>v!==null),0);
+    await page.click('[data-rc-price-scale=zscore]'); info=await charts();
+    assert.equal(info[0].title,'Z-score (SD)');
+    assert.ok(info[0].values.some(v=>Number.isFinite(v)));
+    assert.match(await page.textContent('#rc-price-note'),/60 closes/);
+    await page.click('[data-rc-price-scale=raw]'); info=await charts();
+    assert.equal(info[0].title,'Price (native units)');
+    assert.equal(info[0].values.find(v=>v!==null),136.7);
+    assert.deepEqual(info[1].values,rollingBefore,'price scales do not modify rolling changes');
+    assert.equal(calls.length,scaleFetches,'scaling uses loaded prices without fetching');
+
     assert.ok(info[1].values.some(v=>v!==null));
     assert.equal(await page.locator('.rc-summary-table').count(),3);
     assert.equal(await page.locator('.rc-summary-table tbody tr').count(),12);
@@ -264,6 +287,7 @@ async function ui() {
     assert.equal(await page.locator('.rc-chip').count(),1);
     assert.match(await page.locator('.rc-chip').textContent(),/AAPL/);
     assert.equal(await page.inputValue('#rc-mode'),'abs');
+    assert.equal(await page.locator('[data-rc-price-scale=raw]').getAttribute('aria-pressed'),'true','explicit scale survives reload');
     assert.equal(await page.inputValue('#rc-from'),'2026-01-05');
     assert.equal(await page.inputValue('#rc-to'),'2026-01-06');
     assert.equal(await page.inputValue('#rc-first'),'1m');

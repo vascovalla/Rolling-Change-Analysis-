@@ -74,3 +74,8 @@ button:disabled { cursor:wait; opacity:.55; }
   .rc-chart-card { padding:12px; }
   .rc-chart-body { min-width:0; }
 }
+
+.rc-price-header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; }
+.rc-price-header h3 { margin:0; }
+.rc-scale-controls { display:flex; flex-wrap:wrap; gap:4px; }
+#rc-price-note { margin:8px 0 14px; }

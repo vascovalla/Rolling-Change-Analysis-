@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "test": "node tests/test_frontend.js"
+    "test": "node tests/test_price_scale.js && node tests/test_frontend.js"
   },
   "devDependencies": {
     "playwright": "1.62.1"

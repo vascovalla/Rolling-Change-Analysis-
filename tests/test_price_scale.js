@@ -1,0 +1,40 @@
+const assert = require('node:assert/strict');
+const { priceOverlay } = require('../static/rolling-change.js');
+const prices = {BIG:[{date:'2026-01-02',value:1000},{date:'2026-01-05',value:1100}],SMALL:[{date:'2026-01-02',value:10},{date:'2026-01-05',value:11}]};
+const result = priceOverlay(prices,'rebase','2026-01-02','2026-01-05');
+assert.equal(result.anchorDate,'2026-01-02');
+for (const ticker of ['BIG','SMALL']) {
+ assert.equal(result.series[ticker][0].value,100);
+ assert.ok(Math.abs(result.series[ticker][1].value-110)<1e-10);
+}
+assert.equal(result.series.BIG[1].raw,1100);
+assert.equal(result.series.SMALL[1].raw,11);
+console.log('Price scaling worked example passed');
+
+const snapshot = JSON.stringify(prices);
+const pct = priceOverlay(prices,'pct','2026-01-02','2026-01-05');
+assert.equal(pct.series.BIG[0].value,0);
+assert.ok(Math.abs(pct.series.SMALL[1].value-10)<1e-10);
+const delayed = priceOverlay({...prices,SMALL:[{date:'2026-01-05',value:11}]},'rebase','2026-01-02','2026-01-05');
+assert.equal(delayed.anchorDate,'2026-01-05');
+assert.equal(delayed.series.BIG[0].value,null);
+assert.equal(delayed.series.BIG[1].value,100);
+assert.equal(priceOverlay({A:[{date:'2026-01-02',value:0}]},'rebase','2026-01-02','2026-01-05').series.A[0].value,null);
+const disjoint = priceOverlay({A:[{date:'2026-01-02',value:1}],B:[{date:'2026-01-05',value:2}]},'rebase','2026-01-02','2026-01-05');
+assert.equal(disjoint.anchorDate,null);
+assert.ok(disjoint.warning.length>0);
+assert.equal(priceOverlay({...prices,MISSING:[]},'rebase','2026-01-02','2026-01-05').anchorDate,'2026-01-02');
+assert.equal(priceOverlay(prices,'raw','2026-01-02','2026-01-05').series.BIG[1].value,1100);
+assert.equal(JSON.stringify(prices),snapshot);
+const days = Array.from({length:61},(_,i)=>({date:new Date(Date.UTC(2026,0,i+1)).toISOString().slice(0,10),value:i===59?160:100}));
+const z = priceOverlay({A:days.slice(0,60)},'zscore','2026-01-01','2026-03-31');
+assert.ok(z.series.A.slice(0,59).every(r=>r.value===null),'60-close warmup');
+assert.ok(Math.abs(z.series.A[59].value-7.681145747868608)<1e-9,'known 59 equal prices + one outlier');
+assert.equal(z.series.A[59].raw,160);
+const extended = priceOverlay({A:[...days.slice(0,60),{date:'2026-03-02',value:1000000}]},'zscore','2026-01-01','2026-03-31');
+assert.equal(extended.series.A[59].value,z.series.A[59].value,'future prices cannot change an earlier z-score');
+const constant = priceOverlay({A:days.slice(0,59).concat({date:days[59].date,value:100})},'zscore','2026-01-01','2026-03-31');
+assert.equal(constant.series.A[59].value,null,'zero SD stays undefined');
+const warmed = priceOverlay({A:days},'zscore',days[59].date,days[60].date);
+assert.ok(Math.abs(warmed.series.A[0].value-7.681145747868608)<1e-9,'lookback before visible range supplies warmup');
+console.log('Price scaling date, missing-data, Z-score and no-lookahead regressions passed');

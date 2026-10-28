@@ -29,6 +29,14 @@ Saved observations and fetch coverage are durable PostgreSQL tables. A request r
 
 The ticker dropdown stays closed when empty and searches after at least two characters. Company names and symbols use the same Bloomberg instrument-search contract and yellow-key normalization as ES, through the central data agent. Results keep Bloomberg's ranking so you can select the listing and market. Lookup results and verified descriptions are cached in PostgreSQL (24 hours for matches, 5 minutes for empty results); stored results remain available if the agent is unavailable. Enter or paste full Bloomberg tickers directly when needed. Browser selections/settings are saved locally on that browser; they are not portfolio positions and do not require Risk data.
 
+## Price overlay scale
+
+Use the controls beside the Price chart: **Price**, **Rebase 100**, **% Change**, **Z-score**. One selected instrument defaults to native price; multiple instruments default to Rebase 100. An explicit choice is saved in this browser.
+
+Rebase 100 and % Change use the earliest shared actual closing date with positive baseline prices inside the displayed range. Both a $1,000-to-$1,100 move and a $10-to-$11 move become 100-to-110 (or 0%-to-10%). Points before the shared start stay gaps. Instruments without a positive starting price remain gaps; if the available instruments have no common start, the chart explains why normalization is unavailable.
+
+Z-score uses the trailing 60 actual closes, including the current close, and population standard deviation: `(price - mean) / SD`. It never uses future prices. Fewer than 60 observations or zero SD produce gaps. The price tooltip keeps the native price alongside its scaled value. Scale changes use loaded prices, with no extra provider request. Rolling-change charts and summary calculations remain independent; their default mode is percentage change.
+
 ## Calculations
 
 Rolling windows use calendar dates with month-end clamping. For each actual close, the baseline is the last available close on or before the lookback date. Percentage change = `(price / baseline - 1) * 100`; absolute change = `price - baseline`. A missing baseline or zero percentage denominator produces a gap. Prices/absolute changes use native instrument units; no FX conversion is implied.
@@ -70,7 +78,7 @@ pip install -r requirements-dev.txt
 python -m pytest tests -q
 npm ci
 npx playwright install chromium
-node tests/test_frontend.js
+npm test
 ```
 
 The browser tests require Playwright and an Edge/Chromium browser. Tests use synthetic prices and a fake provider; no production Bloomberg or Enfusion calls are required.

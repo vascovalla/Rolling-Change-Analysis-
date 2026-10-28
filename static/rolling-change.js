@@ -62,21 +62,60 @@
       return { label: window === '1y' ? '12M' : window.toUpperCase(), latest, percentile: percentile(latest, sample), count: sample.length };
     }) };
   }
+  function priceOverlay(prices, scale, from, to) {
+    const entries = Object.entries(prices);
+    const visible = entries.map(([ticker, rows]) => [ticker, rows.filter(r => r.date >= from && r.date <= to)]);
+    const series = Object.fromEntries(visible.map(([ticker, rows]) => [ticker, rows.map(r => ({ ...r, raw: r.value }))]));
+    if (scale === 'raw') return { series, anchorDate: null, warning: '' };
+    if (scale === 'zscore') {
+      for (const [ticker, rows] of entries) {
+        series[ticker] = rows.map((row, i) => {
+          let value = null;
+          if (i >= 59) {
+            const window = rows.slice(i - 59, i + 1).map(r => r.value);
+            const origin = window[0], meanOffset = window.reduce((sum, x) => sum + (x - origin), 0) / 60;
+            const variance = window.reduce((sum, x) => sum + ((x - origin) - meanOffset) ** 2, 0) / 60;
+            if (variance > 0) value = ((row.value - origin) - meanOffset) / Math.sqrt(variance);
+          }
+          return { date: row.date, raw: row.value, value: Number.isFinite(value) ? value : null };
+        }).filter(r => r.date >= from && r.date <= to);
+      }
+      return { series, anchorDate: null, warning: '' };
+    }
+
+    const eligible = visible.filter(([, rows]) => rows.some(r => r.value > 0));
+    const positiveDates = eligible.map(([, rows]) => new Set(rows.filter(r => r.value > 0).map(r => r.date)));
+    const anchorDate = eligible.length ? eligible[0][1].find(r => r.value > 0 && positiveDates.every(dates => dates.has(r.date)))?.date || null : null;
+    for (const [ticker, rows] of visible) {
+      const base = anchorDate ? rows.find(r => r.date === anchorDate && r.value > 0)?.value : null;
+      series[ticker] = rows.map(r => ({ date: r.date, raw: r.value, value: base && r.date >= anchorDate ? (scale === 'pct' ? (r.value / base - 1) * 100 : r.value / base * 100) : null }));
+    }
+    return { series, anchorDate, warning: anchorDate ? '' : 'No common date with positive starting prices. Choose Price to see native values.' };
+  }
   // Export pure calculations for deterministic tests without a browser or live feed.
-  if (typeof module !== 'undefined' && module.exports) module.exports = { canonical, shifted, normalize, rolling, percentile, summary };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { canonical, shifted, normalize, rolling, percentile, summary, priceOverlay };
   if (!root.document) return;
   const $ = id => document.getElementById('rc-' + id);
   let selected = [], history = {}, charts = [], initialized = false, matches = [], active = -1, generation = 0, controller, range = 'all';
   const colors = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2', '#edc949', '#af7aa1'];
   const text = (tag, content, cls) => { const e = document.createElement(tag); e.textContent = content; if (cls) e.className = cls; return e; };
   const SETTINGS_KEY = 'jcap.rolling-analysis.settings.v1';
+  let priceScaleChoice = null;
+  const priceScale = () => priceScaleChoice || (selected.length > 1 ? 'rebase' : 'raw');
+  function syncPriceScale() {
+    document.querySelectorAll('[data-rc-price-scale]').forEach(b => {
+      const active = b.dataset.rcPriceScale === priceScale();
+      b.classList.toggle('active', active); b.setAttribute('aria-pressed', String(active));
+    });
+  }
   let knownCatalog = new Map(), searchGeneration = 0, searchController, searchTimer;
   function save() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selected, range, from: $('from').value, to: $('to').value, first: $('first').value, second: $('second').value, mode: $('mode').value })); } catch (_) {}
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ selected, range, from: $('from').value, to: $('to').value, first: $('first').value, second: $('second').value, mode: $('mode').value, priceScale: priceScaleChoice })); } catch (_) {}
   }
   function invalidate() {
     generation++; if (controller) controller.abort();
     $('summary-tables').replaceChildren(); $('summary-note').textContent = 'Analyze tickers to see their latest rolling changes and historical percentiles.';
+    $('price-note').textContent = '';
     history = {}; destroy(); $('results').classList.add('rc-results-empty'); updateTitles(); $('run').disabled = false; $('cancel').hidden = true;
     $('status').textContent = selected.length ? 'Ready. Select Analyze to use saved prices and fill missing dates.' : 'Select tickers to view rolling change analysis';
   }
@@ -128,6 +167,7 @@
     $('search').value = ''; closeSuggestions(); $('search').focus();
   }
   function paintChips() {
+    syncPriceScale();
     $('help').hidden = !selected.length;
     $('status').classList.toggle('rc-empty', !selected.length);
     if (!selected.length) $('status').textContent = 'Select tickers to view rolling change analysis';
@@ -173,23 +213,34 @@
     $('results').classList.remove('rc-results-empty');
     const from = $('from').value, to = $('to').value || new Date().toISOString().slice(0, 10), mode = $('mode').value;
     const windows = [$('first').value, $('second').value];
+    const scale = priceScale();
+    const overlay = priceOverlay(Object.fromEntries(selected.map(t => [t, history[t] || []])), scale, from, to);
+    syncPriceScale();
+    $('price-note').textContent = overlay.warning || (scale === 'raw' ? 'Prices in native units.' : scale === 'zscore' ? 'Z-score: trailing 60 closes. Gaps mean insufficient history or zero standard deviation.' : overlay.anchorDate + (scale === 'rebase' ? ' = 100 for all compared instruments.' : ' = 0% for all compared instruments.'));
     updateTitles();
     const labels = [...new Set(Object.values(history).flatMap(rows => rows.filter(r => r.date >= from && r.date <= to).map(r => r.date)))].sort();
     const muted = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();
     const grid = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
     ['price', 'first', 'second'].forEach((id, panel) => {
       const datasets = selected.map((ticker, i) => {
-        const rows = history[ticker] || [], values = panel ? rolling(rows, windows[panel - 1], mode) : rows.map(r => r.value);
+        const rows = panel ? (history[ticker] || []) : overlay.series[ticker];
+        const values = panel ? rolling(rows, windows[panel - 1], mode) : rows.map(r => r.value);
         const map = new Map(rows.map((r, j) => [r.date, values[j]]));
-        return { label: ticker, data: labels.map(d => map.has(d) ? map.get(d) : null), borderColor: colors[i % colors.length], borderDash: i < colors.length ? [] : [6, 3 + Math.floor(i / colors.length)], borderWidth: 1.7, pointRadius: 0, pointHitRadius: 7, spanGaps: false };
+        const raw = new Map(rows.map(r => [r.date, panel ? r.value : r.raw]));
+        return { label: ticker, _raw: labels.map(d => raw.has(d) ? raw.get(d) : null), data: labels.map(d => map.has(d) ? map.get(d) : null), borderColor: colors[i % colors.length], borderDash: i < colors.length ? [] : [6, 3 + Math.floor(i / colors.length)], borderWidth: 1.7, pointRadius: 0, pointHitRadius: 7, spanGaps: false };
       });
-      const suffix = panel && mode === 'pct' ? '%' : '';
+      const suffix = panel ? (mode === 'pct' ? '%' : '') : (scale === 'pct' ? '%' : scale === 'zscore' ? ' SD' : '');
+      const priceAxis = {raw:'Price (native units)',rebase:'Rebased (100)',pct:'Change from start (%)',zscore:'Z-score (SD)'}[scale];
       charts.push(new Chart($('chart-' + id), { type: 'line', data: { labels, datasets }, options: {
         responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
         plugins: { legend: { labels: { color: muted, boxWidth: 15 } }, tooltip: { callbacks: {
-          label: ctx => ctx.dataset.label + ': ' + Number(ctx.parsed.y).toLocaleString(undefined, { maximumFractionDigits: 4 }) + suffix
+          label: ctx => {
+            const plotted = ctx.dataset.label + ': ' + Number(ctx.parsed.y).toLocaleString(undefined, { maximumFractionDigits: 4 }) + suffix;
+            const raw = ctx.dataset._raw[ctx.dataIndex];
+            return !panel && scale !== 'raw' && raw !== null ? plotted + ' · Price: ' + raw.toLocaleString(undefined, { maximumFractionDigits: 4 }) : plotted;
+          }
         } } },
-        scales: { x: { ticks: { color: muted, maxTicksLimit: 9 }, grid: { display: false } }, y: { title: { display: true, text: panel ? (suffix ? 'Change (%)' : 'Change (price units)') : 'Price (native units)', color: muted }, ticks: { color: muted, callback: v => Number(v).toLocaleString() + suffix }, grid: { color: grid } } }
+        scales: { x: { ticks: { color: muted, maxTicksLimit: 9 }, grid: { display: false } }, y: { title: { display: true, text: panel ? (suffix ? 'Change (%)' : 'Change (price units)') : priceAxis, color: muted }, ticks: { color: muted, callback: v => Number(v).toLocaleString() + suffix }, grid: { color: grid } } }
       } }));
     });
     drawSummary(from, to, mode);
@@ -280,6 +331,7 @@
         if (Object.hasOwn(WINDOWS, saved.first)) $('first').value = saved.first;
         if (Object.hasOwn(WINDOWS, saved.second)) $('second').value = saved.second;
         if (['pct', 'abs'].includes(saved.mode)) $('mode').value = saved.mode;
+        if (['raw','rebase','pct','zscore'].includes(saved.priceScale)) priceScaleChoice = saved.priceScale;
       }
     } catch (_) {}
     const applyRange = () => {
@@ -334,6 +386,10 @@
         }
       }
     };
+    document.querySelectorAll('[data-rc-price-scale]').forEach(b => { b.onclick = () => {
+      priceScaleChoice = b.dataset.rcPriceScale; syncPriceScale(); save();
+      if (Object.keys(history).length) draw();
+    }; });
     $('run').onclick = analyze;
     ['from', 'to'].forEach(id => { $(id).onchange = () => { range = 'custom'; markRange(); invalidate(); save(); paintChips(); }; });
     ['first', 'second', 'mode'].forEach(id => { $(id).onchange = () => {
