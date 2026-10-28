@@ -200,8 +200,9 @@ async function ui() {
     assert.equal(calls[0].searchParams.get('range'),'1');
     assert.equal(calls[0].searchParams.get('to'),'2026-10-26');
     let info = await charts(); assert.ok(info.every(c=>c.count===3));
-    assert.equal(info[0].title,'Rebased (100)','multiple tickers default to rebased overlay');
-    assert.ok(info[0].values.filter(v=>v!==null)[0]===100);
+    assert.equal(info[0].title,'Change from start (%)','multiple tickers default to return overlay');
+    assert.equal(await page.locator('[data-rc-price-scale=rebase]').count(),0,'no rebasing control');
+    assert.ok(info[0].values.filter(v=>v!==null)[0]===0);
     const priceTooltip = await page.evaluate(()=>{
       const c=Chart.getChart(document.getElementById('rc-chart-price')),ds=c.data.datasets[0];
       const i=ds.data.findIndex(v=>v!==null);
@@ -212,6 +213,9 @@ async function ui() {
     await page.click('[data-rc-price-scale=pct]'); info=await charts();
     assert.equal(info[0].title,'Change from start (%)');
     assert.equal(info[0].values.find(v=>v!==null),0);
+    assert.equal(await page.evaluate(()=>Chart.getChart(document.getElementById('rc-chart-price')).options.scales.y.ticks.callback(10)),'10%');
+    assert.match(await page.locator('.rc-summary-table thead').first().textContent(),/PCTL/);
+
     await page.click('[data-rc-price-scale=zscore]'); info=await charts();
     assert.equal(info[0].title,'Z-score (SD)');
     assert.ok(info[0].values.some(v=>Number.isFinite(v)));
@@ -291,6 +295,14 @@ async function ui() {
     assert.equal(await page.inputValue('#rc-from'),'2026-01-05');
     assert.equal(await page.inputValue('#rc-to'),'2026-01-06');
     assert.equal(await page.inputValue('#rc-first'),'1m');
+    await page.evaluate(()=>{
+      const key='jcap.rolling-analysis.settings.v1',settings=JSON.parse(localStorage.getItem(key));
+      settings.priceScale='rebase'; localStorage.setItem(key,JSON.stringify(settings));
+    });
+    await page.reload(); await page.waitForFunction(()=>document.getElementById('rc-to').max.length>0);
+    assert.equal(await page.locator('[data-rc-price-scale=pct]').getAttribute('aria-pressed'),'true','old rebasing preferences migrate to returns');
+    assert.equal(await page.locator('[data-rc-price-scale=rebase]').count(),0);
+    await page.click('[data-rc-price-scale=raw]');
     await page.click('[data-rc-range="all"]'); await analyze();
     assert.equal((+new Date(calls.at(-1).searchParams.get('to'))-+new Date(calls.at(-1).searchParams.get('from')))/86400000,2600);
     if (process.env.RC_PREVIEW_DIR) {

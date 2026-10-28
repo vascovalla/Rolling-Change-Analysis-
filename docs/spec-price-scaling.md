@@ -9,3 +9,7 @@ Rebase/% use earliest common actual observation date within the displayed interv
 Z-score=(price-trailingmean)/populationSD using60 actual closes, current included, no future observations. Fewer than60 closes or zero SD are gaps. Use loaded lookback history for warm-up; never use future display prices. Label60-close calculation. Raw/normalized/z hover shows actual native-unit price, plus plotted scaled value when different. Scale switch redraws locally without provider calls; preserve selected scale during polling and reload. Default rolling-change mode remains%, existing explicit user settings survive.
 
 Validation: worked1000->1100 and10->11 both100->110; common-date/gap/zero cases; Z-score warm-up,constantseries,knownoutlier,no-lookahead; sourceimmutability. Browser defaults/modepersist/axes/tooltips/fetchcount/rollingindependence/mobile. FullPython+JSsuite once after implementation. Review standards andspec against0314581; no push withoutuserY.
+
+## Superseding user change
+
+Remove Rebase100 entirely from the interface. Multiple-price overlays default to percentage return from a shared start:100*(price/base-1), starting0%, withpercent y-axis labels and negative returns allowed. Migrate saved rebase selection to pct. Keep rawPrice,Z-score, nativepricehover and PCTL label.

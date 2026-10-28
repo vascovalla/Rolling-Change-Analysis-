@@ -88,7 +88,7 @@
     const anchorDate = eligible.length ? eligible[0][1].find(r => r.value > 0 && positiveDates.every(dates => dates.has(r.date)))?.date || null : null;
     for (const [ticker, rows] of visible) {
       const base = anchorDate ? rows.find(r => r.date === anchorDate && r.value > 0)?.value : null;
-      series[ticker] = rows.map(r => ({ date: r.date, raw: r.value, value: base && r.date >= anchorDate ? (scale === 'pct' ? (r.value / base - 1) * 100 : r.value / base * 100) : null }));
+      series[ticker] = rows.map(r => ({ date: r.date, raw: r.value, value: base && r.date >= anchorDate ? (r.value / base - 1) * 100 : null }));
     }
     return { series, anchorDate, warning: anchorDate ? '' : 'No common date with positive starting prices. Choose Price to see native values.' };
   }
@@ -101,7 +101,7 @@
   const text = (tag, content, cls) => { const e = document.createElement(tag); e.textContent = content; if (cls) e.className = cls; return e; };
   const SETTINGS_KEY = 'jcap.rolling-analysis.settings.v1';
   let priceScaleChoice = null;
-  const priceScale = () => priceScaleChoice || (selected.length > 1 ? 'rebase' : 'raw');
+  const priceScale = () => priceScaleChoice || (selected.length > 1 ? 'pct' : 'raw');
   function syncPriceScale() {
     document.querySelectorAll('[data-rc-price-scale]').forEach(b => {
       const active = b.dataset.rcPriceScale === priceScale();
@@ -192,7 +192,7 @@
       const table = document.createElement('table'); table.className = 'rc-summary-table';
       table.setAttribute('aria-label', ticker + ' rolling price change summary');
       const head = table.createTHead().insertRow();
-      ['ROLL', mode === 'pct' ? 'LATEST (%)' : 'LATEST (UNITS)', '%ILE'].forEach(label => { const th = text('th', label); th.scope = 'col'; head.append(th); });
+      ['ROLL', mode === 'pct' ? 'LATEST (%)' : 'LATEST (UNITS)', 'PCTL'].forEach(label => { const th = text('th', label); th.scope = 'col'; head.append(th); });
       const body = table.createTBody();
       for (const period of result.periods) {
         const tr = body.insertRow(); const th = text('th', period.label); th.scope = 'row'; tr.append(th);
@@ -206,7 +206,7 @@
       }
       card.append(table); container.append(card);
     }
-    $('summary-note').textContent = 'Latest = change at each ticker’s last close on or before the end date. %ile ranks that change against valid daily rolling changes within the selected date range (including the latest; ties use average ranks). Red ≤10th percentile; green ≥90th. Hover over a percentile for its sample count. — means insufficient data. Absolute changes use native price units.';
+    $('summary-note').textContent = 'Latest = change at each ticker’s last close on or before the end date. PCTL ranks that change against valid daily rolling changes within the selected date range (including the latest; ties use average ranks). Red ≤10th percentile; green ≥90th. Hover over a percentile for its sample count. — means insufficient data. Absolute changes use native price units.';
   }
   function draw() {
     destroy();
@@ -216,7 +216,7 @@
     const scale = priceScale();
     const overlay = priceOverlay(Object.fromEntries(selected.map(t => [t, history[t] || []])), scale, from, to);
     syncPriceScale();
-    $('price-note').textContent = overlay.warning || (scale === 'raw' ? 'Prices in native units.' : scale === 'zscore' ? 'Z-score: trailing 60 closes. Gaps mean insufficient history or zero standard deviation.' : overlay.anchorDate + (scale === 'rebase' ? ' = 100 for all compared instruments.' : ' = 0% for all compared instruments.'));
+    $('price-note').textContent = overlay.warning || (scale === 'raw' ? 'Prices in native units.' : scale === 'zscore' ? 'Z-score: trailing 60 closes. Gaps mean insufficient history or zero standard deviation.' : overlay.anchorDate + ' = 0% for all compared instruments.');
     updateTitles();
     const labels = [...new Set(Object.values(history).flatMap(rows => rows.filter(r => r.date >= from && r.date <= to).map(r => r.date)))].sort();
     const muted = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();
@@ -230,7 +230,7 @@
         return { label: ticker, _raw: labels.map(d => raw.has(d) ? raw.get(d) : null), data: labels.map(d => map.has(d) ? map.get(d) : null), borderColor: colors[i % colors.length], borderDash: i < colors.length ? [] : [6, 3 + Math.floor(i / colors.length)], borderWidth: 1.7, pointRadius: 0, pointHitRadius: 7, spanGaps: false };
       });
       const suffix = panel ? (mode === 'pct' ? '%' : '') : (scale === 'pct' ? '%' : scale === 'zscore' ? ' SD' : '');
-      const priceAxis = {raw:'Price (native units)',rebase:'Rebased (100)',pct:'Change from start (%)',zscore:'Z-score (SD)'}[scale];
+      const priceAxis = {raw:'Price (native units)',pct:'Change from start (%)',zscore:'Z-score (SD)'}[scale];
       charts.push(new Chart($('chart-' + id), { type: 'line', data: { labels, datasets }, options: {
         responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
         plugins: { legend: { labels: { color: muted, boxWidth: 15 } }, tooltip: { callbacks: {
@@ -331,7 +331,8 @@
         if (Object.hasOwn(WINDOWS, saved.first)) $('first').value = saved.first;
         if (Object.hasOwn(WINDOWS, saved.second)) $('second').value = saved.second;
         if (['pct', 'abs'].includes(saved.mode)) $('mode').value = saved.mode;
-        if (['raw','rebase','pct','zscore'].includes(saved.priceScale)) priceScaleChoice = saved.priceScale;
+        if (['raw','pct','zscore'].includes(saved.priceScale)) priceScaleChoice = saved.priceScale;
+        else if (saved.priceScale === 'rebase') priceScaleChoice = 'pct';
       }
     } catch (_) {}
     const applyRange = () => {

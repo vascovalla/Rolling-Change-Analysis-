@@ -31,9 +31,9 @@ The ticker dropdown stays closed when empty and searches after at least two char
 
 ## Price overlay scale
 
-Use the controls beside the Price chart: **Price**, **Rebase 100**, **% Change**, **Z-score**. One selected instrument defaults to native price; multiple instruments default to Rebase 100. An explicit choice is saved in this browser.
+Use the controls beside the Price chart: **Price**, **% Change**, **Z-score**. One selected instrument defaults to native price; multiple instruments default to % Change. An explicit choice is saved in this browser.
 
-Rebase 100 and % Change use the earliest shared actual closing date with positive baseline prices inside the displayed range. Both a $1,000-to-$1,100 move and a $10-to-$11 move become 100-to-110 (or 0%-to-10%). Points before the shared start stay gaps. Instruments without a positive starting price remain gaps; if the available instruments have no common start, the chart explains why normalization is unavailable.
+% Change uses the earliest shared actual closing date with positive baseline prices inside the displayed range. Both a $1,000-to-$1,100 move and a $10-to-$11 move become 0%-to-10%. Points before the shared start stay gaps. Instruments without a positive starting price remain gaps; if the available instruments have no common start, the chart explains why normalization is unavailable.
 
 Z-score uses the trailing 60 actual closes, including the current close, and population standard deviation: `(price - mean) / SD`. It never uses future prices. Fewer than 60 observations or zero SD produce gaps. The price tooltip keeps the native price alongside its scaled value. Scale changes use loaded prices, with no extra provider request. Rolling-change charts and summary calculations remain independent; their default mode is percentage change.
 
