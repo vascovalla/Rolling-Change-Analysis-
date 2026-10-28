@@ -1,8 +1,8 @@
 """Server-only central data pool client; never uses a local Bloomberg terminal.
 
 Contract: bundled jcap-tool-data/references/api.md. BDH's data mapping is
-returned unchanged, including null observations. Instrument-search is omitted
-because the reference does not specify its request or response schema.
+returned unchanged, including null observations. Instrument search follows
+ES's central instrument-search contract, with no asset-class filter.
 """
 import os
 import time
@@ -37,6 +37,38 @@ class DataAgent:
         return self._fetch(self._client, body)
 
     __call__ = fetch
+
+    def search(self, query):
+        if not isinstance(query, str) or len(query) > 64:
+            raise ValueError('Instrument search query must be at most 64 characters')
+        query = ' '.join(query.split())
+        if len(query) < 2:
+            return {'results': []}
+        body = {'query': query, 'max_results': 10, 'security_type': None}
+        if self._client is None:
+            with httpx.Client(trust_env=False) as client:
+                return self._search(client, body)
+        return self._search(self._client, body)
+
+    def _search(self, client, body):
+        try:
+            for attempt in range(3):
+                response = client.post(
+                    self.url + '/api/v1/bloomberg/instrument-search', json=body,
+                    headers={'X-Service-Key': self._key},
+                    timeout=httpx.Timeout(20, connect=5), follow_redirects=False)
+                if response.status_code == 503 and attempt < 2:
+                    self._sleep(.2 * (attempt + 1))
+                    continue
+                if response.status_code != 200:
+                    raise AgentError('Central instrument search unavailable; saved results retained.')
+                payload = response.json()
+                if (not isinstance(payload, dict) or not isinstance(payload.get('data'), dict)
+                        or not isinstance(payload['data'].get('results'), list)):
+                    raise AgentError('Central instrument search returned an invalid response.')
+                return {'results': payload['data']['results']}
+        except (httpx.HTTPError, ValueError, TypeError):
+            raise AgentError('Central instrument search returned an invalid response or is unavailable.') from None
 
     def _fetch(self, client, body):
         try:

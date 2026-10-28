@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import psycopg
 
 from data_agent import DataAgent
+from instrument_resolver import InstrumentResolver
 from price_history import PriceHistory
 
 
@@ -39,7 +40,7 @@ def _loopback(host):
         return False
 
 
-def create_app(history=None, agent=None):
+def create_app(history=None, agent=None, resolver=None):
     username, password = os.environ.get('APP_USERNAME', ''), os.environ.get('APP_PASSWORD', '')
     public_access = os.environ.get('ALLOW_PUBLIC_ACCESS', '0') == '1'
     if bool(username) != bool(password):
@@ -49,6 +50,7 @@ def create_app(history=None, agent=None):
 
     @asynccontextmanager
     async def lifespan(application):
+        provider = agent
         if application.state.history is None:
             dsn = os.environ.get('DATABASE_URL', '')
             if not dsn:
@@ -61,10 +63,17 @@ def create_app(history=None, agent=None):
                                             options='-c statement_timeout=30000'), fetch)
             except Exception:
                 raise RuntimeError('Backend initialization failed; check database and provider configuration') from None
+        if (application.state.resolver is None and provider is not None
+                and hasattr(provider, 'search') and hasattr(application.state.history, 'connect')):
+            try:
+                application.state.resolver = InstrumentResolver(application.state.history, provider)
+            except Exception:
+                raise RuntimeError('Instrument resolver initialization failed; check database configuration') from None
         yield
 
     application = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     application.state.history = history
+    application.state.resolver = resolver
 
     @application.middleware('http')
     async def authentication(request: Request, call_next):
@@ -120,9 +129,14 @@ def create_app(history=None, agent=None):
             return JSONResponse({'ok': False, 'error': 'History database unavailable; retry shortly'}, status_code=503)
 
     @application.get('/api/instruments')
-    def instruments(request: Request, q: str = Query('', max_length=200)):
+    def instruments(request: Request, q: str = Query('', max_length=64)):
+        query = q.strip()
+        if not query:
+            return {'ok': True, 'items': []}
         try:
-            return {'ok': True, 'items': request.app.state.history.instruments(q.strip())}
+            if request.app.state.resolver is not None:
+                return request.app.state.resolver.search(query)
+            return {'ok': True, 'items': request.app.state.history.instruments(query)}
         except Exception:
             return JSONResponse({'ok': False, 'error': 'Instrument catalog unavailable'}, status_code=503)
 

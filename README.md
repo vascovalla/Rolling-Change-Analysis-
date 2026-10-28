@@ -27,7 +27,7 @@ The server consumes the JCAP central data pool (`JCAP_DATA_URL`, `X-Service-Key`
 
 Saved observations and fetch coverage are durable PostgreSQL tables. A request returns saved data immediately and a polling job when coverage needs filling. Only gaps are sent upstream, at most 12 tickers per provider batch and 100 per browser request. Overlapping fetches are serialized. Missing/null values are not zero, explicit zero is retained, and provider failures preserve historical prices. Incomplete historical responses are retried after six hours; provisional/current-day coverage after five minutes. Finalized complete history is reused. The previous available close at a weekend/holiday boundary is included; predecessor searches expand up to 4,000 days for long suspensions.
 
-The ticker dropdown searches the app's saved instrument catalogue. Enter or paste full Bloomberg tickers to add instruments that are not yet stored. Browser selections/settings are saved locally on that browser; they are not portfolio positions and do not require Risk data.
+The ticker dropdown stays closed when empty and searches after at least two characters. Company names and symbols use the same Bloomberg instrument-search contract and yellow-key normalization as ES, through the central data agent. Results keep Bloomberg's ranking so you can select the listing and market. Lookup results and verified descriptions are cached in PostgreSQL (24 hours for matches, 5 minutes for empty results); stored results remain available if the agent is unavailable. Enter or paste full Bloomberg tickers directly when needed. Browser selections/settings are saved locally on that browser; they are not portfolio positions and do not require Risk data.
 
 ## Calculations
 

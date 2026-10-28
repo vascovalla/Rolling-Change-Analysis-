@@ -11,3 +11,12 @@ Runtime verified: Python 3.13, PostgreSQL isolated local cluster, psycopg 3.3.6,
 - Risk removal: server syntax, four inline JS script blocks, 14 strike release checks, Positions combobox and render-race checks passed.
 
 No production provider calls or real prices/credentials were used. Docker Compose structure/volume/loopback configuration checked; Docker containers and public website deployment were not run on this desktop. Environment credentials and a persistent PostgreSQL volume must be configured on the future host.
+
+
+## Bloomberg name-search update
+
+- Reused ES central instrument-search contract and yellow-key normalization with all-asset results, preserving provider ranking.
+- Removed blank/one-character searches and the default saved SPX popup. No historical prices deleted.
+- 92 backend tests passed against isolated PostgreSQL schemas; full browser suite passed including blank focus/no requests, NVDA results, selection clearing and company-name-versus-ticker ambiguity.
+- Review findings fixed and re-reviewed: reset stale keyboard selection; prefer Bloomberg results over lexical literal candidates.
+- Live verification: NVDA and NVIDIA CORP return real NVDA listings; blank query returns no suggestions; repeat lookup is PostgreSQL cached.

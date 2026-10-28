@@ -80,10 +80,10 @@
     history = {}; destroy(); $('results').classList.add('rc-results-empty'); updateTitles(); $('run').disabled = false; $('cancel').hidden = true;
     $('status').textContent = selected.length ? 'Ready. Select Analyze to use saved prices and fill missing dates.' : 'Select tickers to view rolling change analysis';
   }
-  function renderSuggestions(q, items) {
+  function renderSuggestions(q, items, allowDirect = false) {
     matches = items.filter(o => !selected.includes(o.ticker));
     const full = canonical(q) || (/^[a-z0-9][a-z0-9.\/-]* [a-z]{2}$/i.test(q) ? canonical(q + ' Equity') : null);
-    if (full && !selected.includes(full) && !matches.some(o => o.ticker === full)) matches.unshift({ ticker: full, name: 'Load Bloomberg history' });
+    if (allowDirect && !matches.length && full && !selected.includes(full)) matches.unshift({ ticker: full, name: 'Load Bloomberg history' });
     matches = matches.slice(0, 30); active = -1;
     const list = $('suggestions'); list.replaceChildren();
     matches.forEach((item, i) => {
@@ -93,13 +93,14 @@
       b.setAttribute('role', 'option'); b.setAttribute('aria-selected', 'false');
       b.onmousedown = e => e.preventDefault(); b.onclick = () => add(item.ticker); list.append(b);
     });
-    if (!matches.length) list.append(text('div', 'Enter a full Bloomberg ticker, e.g. 700 HK Equity or SPX Index.', 'rc-hint'));
-    list.hidden = false; $('search').setAttribute('aria-expanded', 'true'); $('search').removeAttribute('aria-activedescendant');
+    const open = q.length >= 2 && matches.length > 0;
+    list.hidden = !open; $('search').setAttribute('aria-expanded', String(open)); $('search').removeAttribute('aria-activedescendant');
   }
   function suggest() {
     clearTimeout(searchTimer); if (searchController) searchController.abort();
     const mine = ++searchGeneration;
     const q = $('search').value.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (q.length < 2) { matches = []; $('suggestions').replaceChildren(); closeSuggestions(); return; }
     const cached = () => [...knownCatalog.values()].filter(o => (o.ticker + ' ' + o.name).toLowerCase().includes(q));
     renderSuggestions(q, cached());
     searchTimer = setTimeout(async () => {
@@ -111,13 +112,14 @@
         if (mine !== searchGeneration || document.activeElement !== $('search')) return;
         const items = (Array.isArray(body.items) ? body.items : []).map(o => ({ ticker: canonical(o.ticker), name: String(o.name || o.ticker) })).filter(o => o.ticker);
         items.forEach(o => knownCatalog.set(o.ticker, o));
-        renderSuggestions(q, items);
+        renderSuggestions(q, items, true);
       } catch (_) {
-        if (mine === searchGeneration && document.activeElement === $('search')) renderSuggestions(q, cached());
+        if (mine === searchGeneration && document.activeElement === $('search')) renderSuggestions(q, cached(), true);
       }
     }, 200);
   }
   function closeSuggestions() {
+    active = -1;
     ++searchGeneration; clearTimeout(searchTimer); if (searchController) searchController.abort();
     $('suggestions').hidden = true; $('search').setAttribute('aria-expanded', 'false'); $('search').removeAttribute('aria-activedescendant');
   }
@@ -322,11 +324,12 @@
       }
       if (e.key === 'Enter') {
         e.preventDefault(); if ($('suggestions').hidden) suggest();
-        if (active >= 0) add(matches[active].ticker);
+        if (active >= 0 && matches[active]) add(matches[active].ticker);
         else {
-          const exact = canonical($('search').value), query = $('search').value.trim().toLowerCase();
+          const query = $('search').value.trim().toLowerCase();
+          if (!query) return;
           const match = matches.find(m => m.ticker.toLowerCase() === query || String(m.name).toLowerCase() === query);
-          if (exact || match || matches.length === 1) add(exact || (match || matches[0]).ticker);
+          if (match || matches.length) add((match || matches[0]).ticker);
           else $('status').textContent = 'Choose a suggestion to confirm the instrument and market.';
         }
       }

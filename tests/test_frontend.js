@@ -65,7 +65,7 @@ async function ui() {
   for (let d = new Date('2024-12-30T00:00:00Z'), i = 0; d <= new Date('2026-10-26T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1), i++) {
     if (![0, 6].includes(d.getUTCDay())) { fixture.dates.push(d.toISOString().slice(0, 10)); fixture.last.push(100 + i / 10); }
   }
-  const catalog = [{ticker:'AAPL US Equity',name:'Apple Inc'}, {ticker:'700 HK Equity',name:'Tencent'}, {ticker:'SPX Index',name:'S&P 500'}];
+  const catalog = [{ticker:'NVDA US Equity',name:'NVIDIA CORP'}, {ticker:'AAPL US Equity',name:'Apple Inc'}, {ticker:'700 HK Equity',name:'Tencent'}, {ticker:'SPX Index',name:'S&P 500'}];
   const reply = (route, body, status = 200) => route.fulfill({status, contentType:'application/json', body:JSON.stringify(body)});
   try {
     browser = await chromium.launch(process.platform === 'win32' ? {channel:'msedge', headless:true} : {headless:true});
@@ -116,7 +116,24 @@ async function ui() {
       const data = new DataTransfer(); data.setData('text/plain', value);
       el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
     },value);
-    const add = async value => { await page.fill('#rc-search',value); await page.press('#rc-search','Enter'); };
+    const add = async value => { await page.fill('#rc-search',value); await page.locator('#rc-suggestions:not([hidden])').waitFor(); await page.press('#rc-search','Enter'); };
+    // Empty focus must not open saved SPX suggestions or query the server.
+    await page.click('#rc-search'); await page.waitForTimeout(300);
+    assert.equal(await page.locator('#rc-suggestions').isVisible(),false,'blank focus has no dropdown');
+    assert.deepEqual(searches,[],'blank search makes no request');
+    await page.fill('#rc-search','n'); await page.waitForTimeout(300);
+    assert.equal(await page.locator('#rc-suggestions').isVisible(),false);
+    assert.deepEqual(searches,[],'one-letter search makes no request');
+    await page.fill('#rc-search','nvda');
+    await page.getByRole('option',{name:/NVIDIA CORP.*NVDA US Equity/}).waitFor();
+    await page.press('#rc-search','ArrowDown');
+    await page.fill('#rc-search',''); await page.press('#rc-search','Enter');
+    assert.deepEqual(pageErrors,[],'clearing a highlighted result is safe');
+    await page.fill('#rc-search','NVIDIA CORP'); await page.waitForTimeout(350);
+    await page.press('#rc-search','Enter');
+    assert.equal(await page.getByRole('button',{name:'Remove NVDA US Equity',exact:true}).count(),1,'company name resolves to Bloomberg listing');
+    assert.equal(await page.getByRole('button',{name:'Remove NVIDIA Corp',exact:true}).count(),0,'company name cannot fabricate a bond ticker');
+    await page.click('#rc-clear');
     // Search help and long results fit the input on desktop and mobile.
     const checkSearchBox = async () => {
       const geometry = await page.evaluate(() => {
@@ -127,7 +144,7 @@ async function ui() {
       assert.equal(geometry.overflow,false,'ticker dropdown has no horizontal overflow');
       assert.ok(geometry.left<=1 && geometry.width<=1,'dropdown aligns with input');
     };
-    await page.fill('#rc-search','nvda'); await page.waitForTimeout(300);
+    await page.fill('#rc-search','nvda'); await page.getByRole('option',{name:/NVIDIA CORP.*NVDA US Equity/}).waitFor();
     await checkSearchBox();
     await page.setViewportSize({width:390,height:844}); await checkSearchBox();
     await page.setViewportSize({width:1440,height:1100});

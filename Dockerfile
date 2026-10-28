@@ -2,7 +2,7 @@ FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --system --uid 10001 rolling
-COPY app.py price_history.py data_agent.py ./
+COPY app.py price_history.py data_agent.py instrument_resolver.py ./
 COPY static ./static
 USER rolling
 EXPOSE 8000
