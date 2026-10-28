@@ -3,8 +3,10 @@
 DATABASE_URL points to PostgreSQL; JCAP_DATA_URL and JCAP_SERVICE_KEY configure
 the central pool. APP_USERNAME and APP_PASSWORD must be set together. Local
 development permits loopback access without them. For public deployment set
-APP_HOST=0.0.0.0 (or the public bind address), configure both credentials, and
-terminate TLS at a reverse proxy. Preserve the public Host header at the proxy.
+APP_HOST=0.0.0.0 (or the public bind address), configure both credentials or
+explicitly enable ALLOW_PUBLIC_ACCESS=1, and terminate TLS at a reverse proxy.
+Preserve the public Host header at the proxy.
+ALLOW_PUBLIC_ACCESS=1 explicitly enables a site without login.
 APIs, health and static files all use the same authentication policy. Use one
 server worker for uninterrupted polling: jobs are process-local, prices,
 coverage and catalog are durable, and fills coordinate across all processes.
@@ -39,9 +41,10 @@ def _loopback(host):
 
 def create_app(history=None, agent=None):
     username, password = os.environ.get('APP_USERNAME', ''), os.environ.get('APP_PASSWORD', '')
+    public_access = os.environ.get('ALLOW_PUBLIC_ACCESS', '0') == '1'
     if bool(username) != bool(password):
         raise ValueError('APP_USERNAME and APP_PASSWORD must both be configured')
-    if not _loopback(os.environ.get('APP_HOST', '127.0.0.1')) and not username:
+    if not _loopback(os.environ.get('APP_HOST', '127.0.0.1')) and not username and not public_access:
         raise ValueError('Public deployment requires APP_USERNAME and APP_PASSWORD')
 
     @asynccontextmanager
@@ -80,7 +83,7 @@ def create_app(history=None, agent=None):
                 return JSONResponse({'ok': False, 'error': 'Authentication required'}, status_code=401,
                                     headers={'WWW-Authenticate': 'Basic realm="Rolling Analysis", charset="UTF-8"',
                                              'Cache-Control': 'no-store'})
-        elif not (_loopback(request.url.hostname) and request.client and _loopback(request.client.host)):
+        elif not public_access and not (_loopback(request.url.hostname) and request.client and _loopback(request.client.host)):
             return JSONResponse({'ok': False, 'error': 'Public access requires authentication configuration'},
                                 status_code=503, headers={'Cache-Control': 'no-store'})
         try:

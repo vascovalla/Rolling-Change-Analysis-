@@ -19,8 +19,10 @@ services:
       DATABASE_URL: postgresql://rolling:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/rolling
       JCAP_DATA_URL: ${JCAP_DATA_URL:-https://jcapallinone.ngrok.app}
       JCAP_SERVICE_KEY: ${JCAP_SERVICE_KEY:?Set JCAP_SERVICE_KEY in .env}
-      APP_USERNAME: ${APP_USERNAME:-matthew}
-      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env}
+      APP_USERNAME: ${APP_USERNAME:-}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      APP_HOST: 0.0.0.0
+      ALLOW_PUBLIC_ACCESS: ${ALLOW_PUBLIC_ACCESS:-0}
     ports:
       - "127.0.0.1:8798:8000"
     depends_on:

@@ -10,7 +10,7 @@ Requires Docker Compose, or Python 3.13+ and PostgreSQL. Copy `.env.example` to 
 docker compose up --build -d
 ```
 
-Open http://127.0.0.1:8798 and sign in with the configured app credentials. PostgreSQL stays on the private Compose network. Its named `price_history` volume survives app/container restarts. `docker compose down` keeps the volume; do not add `--volumes` unless intentionally deleting stored history.
+Open http://127.0.0.1:8798 and sign in with the configured app credentials. To run a deliberately public site without login, set `ALLOW_PUBLIC_ACCESS=1` and leave both `APP_USERNAME` and `APP_PASSWORD` empty. Public access is disabled by default. PostgreSQL stays on the private Compose network. Its named `price_history` volume survives app/container restarts. `docker compose down` keeps the volume; do not add `--volumes` unless intentionally deleting stored history.
 
 For native Python, create a dedicated PostgreSQL database and set environment variables from `.env.example` in your shell. `.env` is read by Compose; native Python uses exported environment variables.
 
@@ -59,7 +59,7 @@ Use a binary-safe redirect for custom-format dumps (PowerShell 7.4+, bash, or `p
 
 ## Website integration
 
-The future website can reverse-proxy this app at its own dedicated origin. Forward ordinary cookies/Authorization, preserve the `/api/` paths and use HTTPS. Keep app authentication enabled or replace it with the host site's trusted server-side auth integration. The central data-agent key is never sent to users. Compose binds loopback; this repository does not create a public tunnel or deploy to production.
+The future website can reverse-proxy this app at its own dedicated origin. Forward ordinary cookies/Authorization, preserve the `/api/` paths and use HTTPS. Use the configured authentication policy, or explicitly set `ALLOW_PUBLIC_ACCESS=1` for a public site. The central data-agent key is never sent to users. Compose binds loopback; this repository does not create a public tunnel or deploy to production.
 
 ## Validation
 

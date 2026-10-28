@@ -492,3 +492,25 @@ def test_explicit_import_reports_affected_rows(connect, tmp_path):
     path.write_text(json.dumps({'timestamp': '2026-10-29T12:00:00+00:00', 'data': {'A': {'dates': ['2026-10-23'], 'last': [200]}}}))
     assert s.seed() == 1
     assert s.read(['A'], '2026-10-23', '2026-10-23')['A']['values'] == [200]
+
+
+def test_explicit_public_site_without_login(monkeypatch):
+    monkeypatch.delenv('APP_USERNAME', raising=False)
+    monkeypatch.delenv('APP_PASSWORD', raising=False)
+    monkeypatch.setenv('APP_HOST', '0.0.0.0')
+    monkeypatch.setenv('ALLOW_PUBLIC_ACCESS', '1')
+    with TestClient(create_app(history=FakeHistory()), base_url='https://public.example') as client:
+        assert client.get('/').status_code == 200
+        assert client.get('/health').json() == {'ok': True}
+        assert client.get('/api/instruments?q=A').status_code == 200
+        assert client.get('/.env').status_code == 404
+
+
+def test_public_mode_does_not_override_configured_login(monkeypatch):
+    monkeypatch.setenv('APP_USERNAME', 'analyst')
+    monkeypatch.setenv('APP_PASSWORD', 'fixture-only')
+    monkeypatch.setenv('APP_HOST', '0.0.0.0')
+    monkeypatch.setenv('ALLOW_PUBLIC_ACCESS', '1')
+    with TestClient(create_app(history=FakeHistory()), base_url='https://public.example') as client:
+        assert client.get('/').status_code == 401
+        assert client.get('/health', auth=('analyst', 'fixture-only')).status_code == 200
