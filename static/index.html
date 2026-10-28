@@ -13,10 +13,13 @@
   <!-- Rolling change analysis -->
   <main id="pane-rollingchange" aria-label="Rolling change analysis">
     <div class="rc-toolbar">
-      <label class="rc-search">TICKER
-        <input id="rc-search" type="text" role="combobox" aria-autocomplete="list" aria-controls="rc-suggestions" aria-expanded="false" autocomplete="off" placeholder="Search ticker or name…">
-        <div id="rc-suggestions" role="listbox" aria-label="Ticker suggestions" hidden></div>
-      </label>
+      <div class="rc-search">
+        <label for="rc-search">TICKER</label>
+        <div class="rc-search-box">
+          <input id="rc-search" type="text" role="combobox" aria-autocomplete="list" aria-controls="rc-suggestions" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="Search ticker or name…">
+          <div id="rc-suggestions" role="listbox" aria-label="Ticker suggestions" hidden></div>
+        </div>
+      </div>
       <span class="rc-divider" aria-hidden="true"></span>
       <label>FROM<input id="rc-from" type="date"></label>
       <label>TO<input id="rc-to" type="date"></label>

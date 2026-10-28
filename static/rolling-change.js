@@ -87,7 +87,9 @@
     matches = matches.slice(0, 30); active = -1;
     const list = $('suggestions'); list.replaceChildren();
     matches.forEach((item, i) => {
-      const b = text('button', item.name + ' · ' + item.ticker); b.type = 'button'; b.id = 'rc-option-' + i;
+      const b = text('button', ''); b.type = 'button'; b.id = 'rc-option-' + i;
+      b.append(text('span', item.name, 'rc-option-name'));
+      if (item.name !== item.ticker) b.append(text('span', item.ticker, 'rc-option-ticker'));
       b.setAttribute('role', 'option'); b.setAttribute('aria-selected', 'false');
       b.onmousedown = e => e.preventDefault(); b.onclick = () => add(item.ticker); list.append(b);
     });

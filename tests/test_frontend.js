@@ -117,6 +117,25 @@ async function ui() {
       el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
     },value);
     const add = async value => { await page.fill('#rc-search',value); await page.press('#rc-search','Enter'); };
+    // Search help and long results fit the input on desktop and mobile.
+    const checkSearchBox = async () => {
+      const geometry = await page.evaluate(() => {
+        const input = document.getElementById('rc-search'), list = document.getElementById('rc-suggestions');
+        const a = input.getBoundingClientRect(), b = list.getBoundingClientRect();
+        return {left:Math.abs(a.left-b.left),width:Math.abs(a.width-b.width),overflow:list.scrollWidth>list.clientWidth};
+      });
+      assert.equal(geometry.overflow,false,'ticker dropdown has no horizontal overflow');
+      assert.ok(geometry.left<=1 && geometry.width<=1,'dropdown aligns with input');
+    };
+    await page.fill('#rc-search','nvda'); await page.waitForTimeout(300);
+    await checkSearchBox();
+    await page.setViewportSize({width:390,height:844}); await checkSearchBox();
+    await page.setViewportSize({width:1440,height:1100});
+    catalog.push({ticker:'LONGNAME US Equity',name:'An exceptionally long instrument description '.repeat(5)});
+    await page.fill('#rc-search','LONGNAME');
+    await page.getByRole('option',{name:/exceptionally long/}).waitFor();
+    await checkSearchBox();
+    await page.press('#rc-search','Escape');
     assert.equal(await page.locator('#rc-settings').isVisible(),true);
     assert.equal(await page.locator('#rc-chart-first').isVisible(),false);
     await page.click('[data-rc-range="1m"]');

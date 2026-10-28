@@ -17,17 +17,22 @@ button:disabled { cursor:wait; opacity:.55; }
 .rc-toolbar { display:flex; flex-wrap:wrap; column-gap:18px; row-gap:12px; align-items:center; margin-bottom:20px; }
 .rc-toolbar label { white-space:nowrap; display:flex; align-items:center; gap:10px; font-size:11px; font-weight:600; color:var(--muted); }
 .rc-toolbar input, .rc-toolbar select { height:26px; border:1px solid var(--border); border-radius:4px; padding:4px 8px; background:var(--card); color:var(--text); font:inherit; font-weight:400; font-size:11px; }
-.rc-search { position:relative; }
-#rc-search { width:260px; padding:5px 10px; border-radius:5px; font-size:12px; }
+.rc-search { display:flex; align-items:center; gap:10px; min-width:0; }
+.rc-search-box { position:relative; width:280px; min-width:0; }
+#rc-search { display:block; width:100%; height:32px; padding:6px 10px; border-radius:6px; font-size:12px; }
+#rc-search:focus-visible { outline:none; border-color:#7b8191; box-shadow:0 0 0 3px #2c304014; }
 .rc-divider { width:1px; height:20px; background:var(--border); }
 .rc-ranges { display:flex; gap:10px; }
 .rc-settings { margin-top:18px; padding-top:16px; border-top:1px solid var(--border); column-gap:24px; }
 #pane-rollingchange [hidden] { display:none !important; }
 #rc-tickers:empty { display:none; }
 #rc-status.rc-empty { padding:12px 0; font-size:12px; }
-#rc-suggestions { position:absolute; top:100%; left:49px; right:0; z-index:40; max-height:300px; overflow:auto; background:var(--card); border:1px solid var(--border); box-shadow:0 5px 16px #0002; }
-#rc-suggestions button { display:block; width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--text); text-align:left; padding:9px; cursor:pointer; font-size:12px; }
-#rc-suggestions button:hover, #rc-suggestions [aria-selected="true"] { background:var(--border); }
+#rc-suggestions { position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:40; max-height:280px; overflow-y:auto; overflow-x:hidden; padding:4px; border-radius:8px; background:var(--card); border:1px solid var(--border); box-shadow:0 6px 18px #1820341a; white-space:normal; font-weight:400; }
+#rc-suggestions button { display:block; width:100%; border:0; border-radius:5px; background:transparent; color:var(--text); text-align:left; padding:9px 10px; cursor:pointer; font:inherit; font-size:12px; line-height:1.4; white-space:normal; overflow-wrap:anywhere; }
+#rc-suggestions button:hover, #rc-suggestions [aria-selected="true"] { background:#f0f2f6; }
+.rc-option-name { display:block; font-weight:500; }
+.rc-option-ticker { display:block; margin-top:2px; color:var(--muted); font-size:11px; }
+#rc-suggestions .rc-hint { margin:0; padding:9px 10px; font-size:12px; line-height:1.5; font-weight:400; overflow-wrap:anywhere; }
 .rc-actions { display:flex; gap:10px; padding-left:16px; border-left:1px solid var(--border); }
 .rc-actions button { height:26px; padding:4px 12px; }
 #rc-tickers { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
@@ -36,7 +41,7 @@ button:disabled { cursor:wait; opacity:.55; }
 .rc-chart-card { margin-top:22px; padding:18px; border:1px solid var(--border); border-radius:6px; background:var(--card, var(--bg)); }
 .rc-chart-card h3 { font-size:13px; font-weight:600; margin:0 0 14px; color:var(--text); }
 .rc-chart-body { height:280px; position:relative; }
-@media(max-width:650px) { #pane-rollingchange { padding:12px; } .rc-search { width:100%; } #rc-search { flex:1; min-width:0; } .rc-divider { display:none; } .rc-chart-body { height:240px; } }
+@media(max-width:650px) { #pane-rollingchange { padding:12px; } .rc-search { width:100%; } .rc-search-box { flex:1; width:auto; } #rc-search { min-width:0; } .rc-divider { display:none; } .rc-chart-body { height:240px; } }
 
 .rc-chart-placeholder { display:none; margin:20px 0; color:var(--muted); font-size:12px; }
 .rc-results-empty .rc-chart-placeholder { display:block; }
